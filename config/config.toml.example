@@ -1,0 +1,44 @@
+[matrix]
+homeserver  = "https://matrix.org"
+user_id     = "@scrobbler-bot:matrix.org"
+password    = "hunter2"
+device_name = "scrobbler"
+
+[matrix.verification]
+auto_accept_users = ["@yourusername:matrix.org"]
+
+[lastfm]
+api_key       = "your_lastfm_api_key_here"
+shared_secret = "your_lastfm_shared_secret_here"
+
+[storage]
+# Generate with: python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+encryption_key = "your_fernet_key_here"
+db_path        = "data/scrobbler.db"
+
+[behavior]
+prefer_dm_for_linking          = true
+auto_accept_dm_invites         = true
+auto_accept_room_invites_from  = ["@yourusername:matrix.org"]
+recovery_lookback_hours        = 6
+abandoned_play_grace_seconds   = 60
+queue_drain_interval_seconds   = 30
+abandoned_sweep_interval_secs  = 300
+
+[sources]
+# Whitelist of source values to scrobble. ["*"] = allow all.
+# Valid source values: "youtube_music", "youtube", "spotify", "other"
+allowed = ["*"]
+# Blacklist applied after allowed. Example: denied = ["other"]
+denied  = []
+
+[emitters]
+# Whitelist of emitter.user_id values to accept events from. ["*"] = allow all.
+# Example: allowed_user_ids = ["@musicbot:matrix.org"]
+allowed_user_ids = ["*"]
+
+[quality]
+# If true, only scrobble events with metadata_quality == "high".
+# "high" means yt-dlp provided artist/track fields directly (YT Music, Topic channels).
+# "low" means metadata was derived from the title heuristic.
+require_high = false
