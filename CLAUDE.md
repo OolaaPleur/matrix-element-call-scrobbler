@@ -29,8 +29,8 @@ Logs go to `logs/scrobbler.log` (rotating, 10 MB × 5). The `data/` directory ho
 ### Event flow (the core loop)
 
 The companion music bot emits two custom Matrix room events:
-- `dev.oolaa.musicbot.track_started` — fired when a track begins playing; carries artist/track/album/duration, a UUID `play_id`, and the list of current call participants
-- `dev.oolaa.musicbot.track_finished` — fired when a track ends; carries `play_id`, `played_s`, `reason` (`"finished"` | `"skipped"` | `"stopped"` | `"error"`), and `eligible_participants` (users present for both start and finish)
+- `dev.elementcall.musicbot.track_started` — fired when a track begins playing; carries artist/track/album/duration, a UUID `play_id`, and the list of current call participants
+- `dev.elementcall.musicbot.track_finished` — fired when a track ends; carries `play_id`, `played_s`, `reason` (`"finished"` | `"skipped"` | `"stopped"` | `"error"`), and `eligible_participants` (users present for both start and finish)
 
 `EventHandler` (`event_handler.py`) dispatches these to `PlayTracker` (`play_tracker.py`).
 
@@ -85,13 +85,13 @@ cat data/device_id
 python3 -c "
 from nio.store import SqliteStore
 did = open('data/device_id').read().strip()
-store = SqliteStore('@your-scrobbler-bot:matrix.org', did, 'data/crypto_store/')
+store = SqliteStore('@yourbotname:matrix.org', did, 'data/crypto_store/')
 acc = store.load_account()
 print(acc.identity_keys['ed25519'])
 "
 ```
 
-Run `/verify <device_id> <fingerprint>` in any Element room as `@yourusername:matrix.org`. The bot auto-accepts the cross-signing.
+Run `/verify <device_id> <fingerprint>` in any Element room as `@youruser:matrix.org`. The bot auto-accepts the cross-signing.
 
 **Why `/verify` alone is not enough:** Without cross-signing bootstrap, the device shows as "Verification successful" in the dialog but remains "Unverified" in the session list. The bot must upload its own master/self-signing/user-signing keys on startup (via `cross_signing.py:ensure_cross_signing()`) for Element to complete the full trust chain. This is already wired into `_setup_e2ee` in `bot.py`.
 

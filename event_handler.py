@@ -4,8 +4,8 @@ from nio import MatrixRoom
 
 logger = logging.getLogger(__name__)
 
-EVT_TRACK_STARTED  = "dev.oolaa.musicbot.track_started"
-EVT_TRACK_FINISHED = "dev.oolaa.musicbot.track_finished"
+EVT_TRACK_STARTED  = "dev.elementcall.musicbot.track_started"
+EVT_TRACK_FINISHED = "dev.elementcall.musicbot.track_finished"
 
 
 class EventHandler:

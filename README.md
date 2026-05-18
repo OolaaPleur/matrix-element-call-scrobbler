@@ -135,7 +135,7 @@ Events with an empty artist or track name are always dropped.
 | `cross_signing.py` | Bootstrap and upload Matrix cross-signing keys |
 | `auto_accept.py` | SAS verification auto-acceptance |
 
-The bot listens for `dev.oolaa.musicbot.track_started` and `dev.oolaa.musicbot.track_finished` custom room events emitted by the companion music bot. These event types must match what the music bot is configured to emit.
+The bot listens for `dev.elementcall.musicbot.track_started` and `dev.elementcall.musicbot.track_finished` custom room events emitted by the companion music bot. These event types must match what the music bot is configured to emit.
 
 ## License
 

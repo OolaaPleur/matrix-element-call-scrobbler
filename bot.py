@@ -241,7 +241,7 @@ class ScrobblerBot:
                 resp = await self._client.room_messages(room_id, start="", limit=500)
                 for event in getattr(resp, "chunk", []):
                     evt_type = getattr(event, "type", None) or getattr(event, "source", {}).get("type")
-                    if evt_type == "dev.oolaa.musicbot.track_finished":
+                    if evt_type == "dev.elementcall.musicbot.track_finished":
                         content = getattr(event, "source", {}).get("content", {})
                         play_id = content.get("play_id")
                         if play_id:
