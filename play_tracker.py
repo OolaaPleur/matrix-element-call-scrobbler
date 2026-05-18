@@ -68,8 +68,12 @@ class PlayTracker:
     async def on_track_started(self, event_content: dict, room_id: str):
         accept, drop_reason = _should_accept_track(event_content, self._cfg)
         if not accept:
-            logger.info("track_started dropped: play_id=%s reason=%s",
-                        event_content.get("play_id"), drop_reason)
+            logger.info(
+                "track_started dropped: play_id=%s reason=%s artist=%r track=%r source=%r quality=%r",
+                event_content.get("play_id"), drop_reason,
+                event_content.get("artist"), event_content.get("track"),
+                event_content.get("source"), event_content.get("metadata_quality"),
+            )
             return
 
         play_id    = event_content["play_id"]
@@ -79,20 +83,30 @@ class PlayTracker:
         duration_s = int(event_content.get("duration_s") or 0)
         started_at = int(event_content.get("started_at") or time.time())
         participants = event_content.get("call_participants", [])
+        logger.debug("play_id=%s participants=%s", play_id, participants)
 
+        inserted = 0
         for user_id in participants:
             creds = await self._get_eligible_creds(user_id, room_id)
             if creds is None:
+                logger.debug("play_id=%s skipped user=%s (no creds or blacklisted)", play_id, user_id)
                 continue
 
             await self._storage.insert_play_state(
                 play_id, user_id, room_id, started_at, artist, track, album, duration_s
             )
             logger.info("play_id=%s RECEIVED_STARTED for user=%s", play_id, user_id)
+            inserted += 1
 
             ti = TrackInfo(artist=artist, track=track, album=album,
                            duration_s=duration_s, timestamp=started_at)
             asyncio.create_task(self._send_now_playing(creds, ti))
+
+        if inserted == 0:
+            logger.warning(
+                "play_id=%s track_started produced no play_state rows (participants=%d, none linked/eligible)",
+                play_id, len(participants),
+            )
 
     async def _send_now_playing(self, creds: UserCreds, track: TrackInfo):
         try:

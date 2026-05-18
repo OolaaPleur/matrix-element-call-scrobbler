@@ -68,8 +68,35 @@ Single `aiosqlite` connection. Last.fm session keys are encrypted at rest with F
 
 All commands begin with `!fm` and are handled by `CommandRouter` → `LinkingManager`. The linking flow is a standard Last.fm OAuth token dance: `!fm link` gets a token and returns the auth URL; `!fm confirm` exchanges the token for a session key.
 
+## Device Verification
+
+After first run (or after wiping `data/crypto_store/`), verify the bot's device in Element using the `/verify` slash command:
+
+```
+/verify <device_id> <ed25519_fingerprint>
+```
+
+Get the values:
+```bash
+# device_id
+cat data/device_id
+
+# ed25519 fingerprint
+python3 -c "
+from nio.store import SqliteStore
+did = open('data/device_id').read().strip()
+store = SqliteStore('@your-scrobbler-bot:matrix.org', did, 'data/crypto_store/')
+acc = store.load_account()
+print(acc.identity_keys['ed25519'])
+"
+```
+
+Run `/verify <device_id> <fingerprint>` in any Element room as `@yourusername:matrix.org`. The bot auto-accepts the cross-signing.
+
+**Why `/verify` alone is not enough:** Without cross-signing bootstrap, the device shows as "Verification successful" in the dialog but remains "Unverified" in the session list. The bot must upload its own master/self-signing/user-signing keys on startup (via `cross_signing.py:ensure_cross_signing()`) for Element to complete the full trust chain. This is already wired into `_setup_e2ee` in `bot.py`.
+
 ## Key design constraints
 
-- `ignore_unverified_devices=False` is intentional — the bot refuses to send to unverified devices to preserve E2EE guarantees. All participants must have verified devices.
+- `share_group_session` is called before every `room_send` with `ignore_unverified_devices=True`, matching the musicbot approach — messages are encrypted but device verification is not enforced.
 - The `play_id` is the unit of idempotency. `INSERT OR IGNORE` on `play_state` and checking for existing rows in `on_track_finished` make duplicate events safe.
 - `MUSICBOT_CHANGES.md` documents what changes are needed in the **companion music bot** to emit the custom events this bot consumes.

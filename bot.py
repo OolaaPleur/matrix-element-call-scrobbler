@@ -5,6 +5,8 @@ import time
 from pathlib import Path
 from typing import Optional
 
+from cross_signing import ensure_cross_signing
+
 from nio import (
     AsyncClient,
     AsyncClientConfig,
@@ -15,11 +17,12 @@ from nio import (
     KeyVerificationStart,
     LocalProtocolError,
     MatrixRoom,
-    RoomEncryptedEvent,
+    UnknownEncryptedEvent,
     RoomMessageText,
-    SasVerification,
     UnknownEvent,
 )
+
+from nio.crypto import Sas
 
 from auto_accept import AutoAccept
 from commands import CommandRouter
@@ -84,9 +87,12 @@ class ScrobblerBot:
         except LocalProtocolError:
             pass
 
+        c.load_store()
+
         # restore_login / upload keys
         try:
-            await c.keys_upload()
+            resp = await c.keys_upload()
+            logger.info("keys_upload response: %s", resp)
         except LocalProtocolError:
             logger.debug("keys_upload: nothing to upload")
 
@@ -94,6 +100,17 @@ class ScrobblerBot:
             await c.keys_query()
         except LocalProtocolError:
             logger.debug("keys_query: no keys to query")
+
+        try:
+            await ensure_cross_signing(
+                homeserver=self._config.homeserver,
+                token=self._client.access_token,
+                user_id=self._client.user_id,
+                device_id=self._client.device_id,
+                data_dir=Path("data"),
+            )
+        except Exception as exc:
+            logger.warning("Cross-signing setup failed: %s", exc)
 
     async def _login(self):
         c = self._config
@@ -129,15 +146,17 @@ class ScrobblerBot:
             return
         logger.info("Auto-accepting SAS verification from %s", event.sender)
         try:
+            await self._client.accept_key_verification(event.transaction_id)
             sas = self._client.key_verifications.get(event.transaction_id)
             if sas is None:
-                sas = await self._client.accept_key_verification(event.transaction_id)
+                logger.warning("No SAS object after accept for %s", event.transaction_id)
+                return
             await self._client.to_device(sas.share_key())
         except Exception:
             logger.exception("Verification start error")
 
     async def _on_verification_key(self, event: KeyVerificationKey):
-        sas: Optional[SasVerification] = self._client.key_verifications.get(event.transaction_id)
+        sas: Optional[Sas] = self._client.key_verifications.get(event.transaction_id)
         if sas is None:
             return
         if event.sender not in self._config.auto_accept_users:
@@ -149,7 +168,7 @@ class ScrobblerBot:
             logger.exception("Verification key error")
 
     async def _on_verification_mac(self, event: KeyVerificationMac):
-        sas = self._client.key_verifications.get(event.transaction_id)
+        sas: Optional[Sas] = self._client.key_verifications.get(event.transaction_id)
         if sas is None:
             return
         try:
@@ -164,11 +183,15 @@ class ScrobblerBot:
 
     async def _send_message(self, room_id: str, text: str):
         try:
+            try:
+                await self._client.share_group_session(room_id, ignore_unverified_devices=True)
+            except Exception:
+                pass
             await self._client.room_send(
                 room_id=room_id,
                 message_type="m.room.message",
                 content={"msgtype": "m.text", "body": text},
-                ignore_unverified_devices=False,
+                ignore_unverified_devices=True,
             )
         except Exception:
             logger.exception("Failed to send message to %s", room_id)
@@ -182,7 +205,7 @@ class ScrobblerBot:
         c.add_event_callback(self._on_unknown_event, (UnknownEvent,))
         # Decrypted events arrive as their decrypted type; catch the raw encrypted
         # ones too so we can log undecryptable messages
-        c.add_event_callback(self._on_encrypted_event, (RoomEncryptedEvent,))
+        c.add_event_callback(self._on_encrypted_event, (UnknownEncryptedEvent,))
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent):
         if event.state_key == self._config.user_id:
@@ -201,7 +224,7 @@ class ScrobblerBot:
     async def _on_unknown_event(self, room: MatrixRoom, event: UnknownEvent):
         await self._event_handler.on_room_event(room, event)
 
-    async def _on_encrypted_event(self, room: MatrixRoom, event: RoomEncryptedEvent):
+    async def _on_encrypted_event(self, room: MatrixRoom, event: UnknownEncryptedEvent):
         # Undecryptable — log only, matrix-nio will handle decrypted form separately
         logger.debug("Received encrypted event from %s in %s (may decrypt later)", event.sender, room.room_id)
 
