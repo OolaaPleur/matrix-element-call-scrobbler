@@ -25,7 +25,7 @@ The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/sulta
 ### 1. Clone and install
 
 ```bash
-git clone https://github.com/sultanalburaq/matrix-element-call-scrobbler
+git clone https://github.com/OolaaPleur/matrix-element-call-scrobbler
 cd matrix-element-call-scrobbler
 pip install -r requirements.txt
 ```
