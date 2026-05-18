@@ -1,0 +1,15 @@
+# Secrets and runtime data
+config/config.toml
+data/
+logs/
+
+# Python
+__pycache__/
+*.pyc
+*.pyo
+.venv/
+venv/
+*.egg-info/
+
+# Claude Code local settings
+.claude/settings.local.json
