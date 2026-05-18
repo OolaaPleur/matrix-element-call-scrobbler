@@ -95,8 +95,16 @@ Run `/verify <device_id> <fingerprint>` in any Element room as `@yourusername:ma
 
 **Why `/verify` alone is not enough:** Without cross-signing bootstrap, the device shows as "Verification successful" in the dialog but remains "Unverified" in the session list. The bot must upload its own master/self-signing/user-signing keys on startup (via `cross_signing.py:ensure_cross_signing()`) for Element to complete the full trust chain. This is already wired into `_setup_e2ee` in `bot.py`.
 
+## Filtering (`play_tracker.py:_should_accept_track`)
+
+Before inserting a `play_state` row, incoming `track_started` events are filtered by:
+- `[filter.emitters] allowed_user_ids` — allowlist of Matrix user IDs allowed to emit events (`["*"]` = all)
+- `[filter.sources] allowed` / `denied` — allowlist/denylist of source strings (`"youtube"`, `"youtube_music"`, `"other"`)
+- `[filter.quality] require_high` — if true, only accept events where `metadata_quality == "high"` (artist/track from YouTube metadata tags, not title-parsed)
+- Empty artist or track always drops the event
+
 ## Key design constraints
 
 - `share_group_session` is called before every `room_send` with `ignore_unverified_devices=True`, matching the musicbot approach — messages are encrypted but device verification is not enforced.
 - The `play_id` is the unit of idempotency. `INSERT OR IGNORE` on `play_state` and checking for existing rows in `on_track_finished` make duplicate events safe.
-- `MUSICBOT_CHANGES.md` documents what changes are needed in the **companion music bot** to emit the custom events this bot consumes.
+- `call_participants` in `track_started` must be non-empty for any scrobbles to happen — if the companion musicbot is restarted while a call is in progress, it must re-seed its participant state before emitting events.
