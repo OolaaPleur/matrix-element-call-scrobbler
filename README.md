@@ -1,12 +1,12 @@
 # matrix-element-call-scrobbler
 
-A Matrix bot that listens for playback events from [matrix-element-call-musicbot](https://github.com/sultanalburaq/matrix-element-call-musicbot) and scrobbles tracks to Last.fm on behalf of linked users.
+A Matrix bot that listens for playback events from [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot) and scrobbles tracks to Last.fm on behalf of linked users.
 
 Multiple users in the same Element Call session each get their own scrobbles to their own Last.fm account — the bot handles all of them in parallel.
 
 ## How It Works
 
-The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/sultanalburaq/matrix-element-call-musicbot). When the music bot starts playing a track in an Element Call session, it emits custom Matrix room events carrying the track metadata and the list of active call participants. The scrobbler:
+The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot). When the music bot starts playing a track in an Element Call session, it emits custom Matrix room events carrying the track metadata and the list of active call participants. The scrobbler:
 
 1. Immediately updates "now playing" on Last.fm for every linked participant
 2. Scrobbles the track when it finishes, subject to Last.fm's eligibility rules (≥30 s played and ≥50% of duration, or ≥240 s)
@@ -18,7 +18,7 @@ The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/sulta
 - Python 3.11+ (3.10 works with the bundled `tomli` fallback)
 - A Matrix account for the bot (any homeserver)
 - A [Last.fm API account](https://www.last.fm/api/account/create) (free) — you need an API key and shared secret
-- [matrix-element-call-musicbot](https://github.com/sultanalburaq/matrix-element-call-musicbot) running in the same room(s)
+- [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot) running in the same room(s)
 
 ## Setup
 
