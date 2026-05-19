@@ -263,7 +263,6 @@ class ScrobblerBot:
         self._auto_accept = AutoAccept(
             client=self._client,
             trusted_users=self._config.auto_accept_room_invites_from,
-            auto_accept_dm=self._config.auto_accept_dm_invites,
         )
         self._event_handler = EventHandler(
             play_tracker=self._play_tracker,

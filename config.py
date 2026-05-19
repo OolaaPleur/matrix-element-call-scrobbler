@@ -31,8 +31,6 @@ class Config:
         self.db_path        = st.get("db_path", "data/scrobbler.db")
 
         bh = data.get("behavior", {})
-        self.prefer_dm_for_linking         = bh.get("prefer_dm_for_linking", True)
-        self.auto_accept_dm_invites        = bh.get("auto_accept_dm_invites", True)
         self.auto_accept_room_invites_from = bh.get("auto_accept_room_invites_from", [])
         self.recovery_lookback_hours       = bh.get("recovery_lookback_hours", 6)
         self.abandoned_play_grace_seconds  = bh.get("abandoned_play_grace_seconds", 60)

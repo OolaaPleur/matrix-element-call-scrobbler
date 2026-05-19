@@ -17,8 +17,6 @@ encryption_key = "your_fernet_key_here"
 db_path        = "data/scrobbler.db"
 
 [behavior]
-prefer_dm_for_linking          = true
-auto_accept_dm_invites         = true
 auto_accept_room_invites_from  = ["@yourusername:matrix.org"]
 recovery_lookback_hours        = 6
 abandoned_play_grace_seconds   = 60
