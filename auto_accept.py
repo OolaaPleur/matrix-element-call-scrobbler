@@ -16,6 +16,8 @@ class AutoAccept:
         if event.sender in self._trusted:
             logger.info("Auto-accepting invite from trusted user %s to %s", event.sender, room.room_id)
             await self._join(room.room_id)
+        else:
+            logger.info("Ignoring invite from %s to %s (not in auto_accept_room_invites_from)", event.sender, room.room_id)
 
     async def _join(self, room_id: str):
         try:
