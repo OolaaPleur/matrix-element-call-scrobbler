@@ -5,7 +5,7 @@ import time
 from pathlib import Path
 from typing import Optional
 
-from cross_signing import ensure_cross_signing
+from matrix_bot_common.cross_signing import ensure_cross_signing
 
 from nio import (
     AsyncClient,
