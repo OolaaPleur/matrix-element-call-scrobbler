@@ -1,4 +1,4 @@
-# matrix-element-call-scrobbler
+# Matrix Element Call Scrobbler
 
 A Matrix bot that listens for playback events from [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot) and scrobbles tracks to Last.fm on behalf of linked users.
 
@@ -133,7 +133,7 @@ Events with an empty artist or track name are always dropped.
 | `linking.py` | `!fm link` / `!fm confirm` OAuth token dance |
 | `commands.py` | Command routing |
 | `cross_signing.py` | Bootstrap and upload Matrix cross-signing keys |
-| `auto_accept.py` | SAS verification auto-acceptance |
+| `auto_accept.py` | Room invite auto-acceptance (trusted-sender allowlist) |
 
 The bot listens for `dev.elementcall.musicbot.track_started` and `dev.elementcall.musicbot.track_finished` custom room events emitted by the companion music bot. These event types must match what the music bot is configured to emit.
 

@@ -61,8 +61,9 @@ Single `aiosqlite` connection. Last.fm session keys are encrypted at rest with F
 ### Bot startup sequence (`bot.py`)
 
 1. Open storage → setup `AsyncClient` with E2EE store → login (token restore or password) → upload/query keys
-2. Initial `sync(full_state=True)` → replay recent timeline (recover missed `track_finished` events from the last `recovery_lookback_hours`)
-3. Start background tasks → enter `sync_forever` loop with exponential backoff on errors
+2. Register callbacks: `AutoAccept` (`auto_accept.py`) handles room invites from the `auto_accept_room_invites_from` allowlist; `_register_verification_callbacks` handles SAS verification from the `auto_accept_users` allowlist — these are separate concerns with separate config keys.
+3. Initial `sync(full_state=True)` → replay recent timeline (recover missed `track_finished` events from the last `recovery_lookback_hours`)
+4. Start background tasks → enter `sync_forever` loop with exponential backoff on errors
 
 ### User-facing commands
 
