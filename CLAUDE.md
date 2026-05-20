@@ -9,6 +9,7 @@ A Matrix bot (`matrix-nio` + E2EE) that listens for custom room events from a co
 ## Running
 
 ```bash
+# ../matrix-element-call-common must be cloned as a sibling directory first
 # Install dependencies (Python 3.11+ recommended; 3.10 works with tomli fallback)
 pip install -r requirements.txt
 
@@ -94,7 +95,7 @@ print(acc.identity_keys['ed25519'])
 
 Run `/verify <device_id> <fingerprint>` in any Element room as `@youruser:matrix.org`. The bot auto-accepts the cross-signing.
 
-**Why `/verify` alone is not enough:** Without cross-signing bootstrap, the device shows as "Verification successful" in the dialog but remains "Unverified" in the session list. The bot must upload its own master/self-signing/user-signing keys on startup (via `cross_signing.py:ensure_cross_signing()`) for Element to complete the full trust chain. This is already wired into `_setup_e2ee` in `bot.py`.
+**Why `/verify` alone is not enough:** Without cross-signing bootstrap, the device shows as "Verification successful" in the dialog but remains "Unverified" in the session list. The bot must upload its own master/self-signing/user-signing keys on startup (via `matrix_bot_common.cross_signing:ensure_cross_signing()`) for Element to complete the full trust chain. This is already wired into `_setup_e2ee` in `bot.py`.
 
 ## Filtering (`play_tracker.py:_should_accept_track`)
 

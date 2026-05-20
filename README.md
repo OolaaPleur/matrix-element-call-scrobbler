@@ -25,10 +25,15 @@ The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/Oolaa
 ### 1. Clone and install
 
 ```bash
+# Clone this repo and the shared library as siblings
 git clone https://github.com/OolaaPleur/matrix-element-call-scrobbler
+git clone https://github.com/OolaaPleur/matrix-element-call-common
 cd matrix-element-call-scrobbler
-pip install -r requirements.txt
+pip install -r requirements.txt   # resolves ../matrix-element-call-common automatically
 ```
+
+> [!NOTE]
+> `requirements.txt` references `../matrix-element-call-common` (the [shared library](https://github.com/OolaaPleur/matrix-element-call-common)). Both repos must be cloned into the same parent directory.
 
 ### 2. Configure
 
@@ -132,7 +137,7 @@ Events with an empty artist or track name are always dropped.
 | `scrobblers/lastfm.py` | Last.fm API client (now-playing, scrobble, love, OAuth) |
 | `linking.py` | `!fm link` / `!fm confirm` OAuth token dance |
 | `commands.py` | Command routing |
-| `cross_signing.py` | Bootstrap and upload Matrix cross-signing keys |
+| `matrix_bot_common.cross_signing` | Bootstrap and upload Matrix cross-signing keys (shared library) |
 | `auto_accept.py` | Room invite auto-acceptance (trusted-sender allowlist) |
 
 The bot listens for `dev.elementcall.musicbot.track_started` and `dev.elementcall.musicbot.track_finished` custom room events emitted by the companion music bot. These event types must match what the music bot is configured to emit.
