@@ -1,5 +1,5 @@
 import logging
-import time
+from datetime import datetime
 
 from scrobblers.lastfm import LastFmScrobbler
 from storage import Storage
@@ -59,7 +59,7 @@ class LinkingManager:
         lines = [
             f"Last.fm: **{info['username']}**",
             f"Scrobbling: {'on' if info['enabled'] else 'off (use `!fm on` to re-enable)'}",
-            f"Linked at: <t:{info['linked_at']}:f>",
+            f"Linked at: {datetime.fromtimestamp(info['linked_at']):%Y-%m-%d %H:%M}",
         ]
         if blacklisted:
             lines.append(f"Ignored rooms: {len(blacklisted)} room(s)")

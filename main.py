@@ -12,11 +12,11 @@ def setup_logging():
     Path("logs").mkdir(exist_ok=True)
     fmt = logging.Formatter("%(asctime)s %(levelname)-8s %(name)s: %(message)s")
     root = logging.getLogger()
-    root.setLevel(logging.DEBUG)
+    root.setLevel(logging.INFO)
 
     fh = RotatingFileHandler("logs/scrobbler.log", maxBytes=10 * 1024 * 1024, backupCount=5)
     fh.setFormatter(fmt)
-    fh.setLevel(logging.DEBUG)
+    fh.setLevel(logging.INFO)
     root.addHandler(fh)
 
     sh = logging.StreamHandler(sys.stdout)
@@ -27,6 +27,8 @@ def setup_logging():
     # Quiet down noisy libraries
     logging.getLogger("nio").setLevel(logging.WARNING)
     logging.getLogger("aiohttp").setLevel(logging.WARNING)
+    logging.getLogger("aiosqlite").setLevel(logging.WARNING)
+    logging.getLogger("peewee").setLevel(logging.WARNING)
 
 
 async def main():

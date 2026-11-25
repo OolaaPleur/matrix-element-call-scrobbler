@@ -1,4 +1,3 @@
-import asyncio
 import logging
 import time
 from typing import Optional
@@ -48,6 +47,7 @@ CREATE TABLE IF NOT EXISTS scrobble_queue (
   album            TEXT,
   duration_s       INTEGER,
   played_at        INTEGER NOT NULL,
+  room_id          TEXT,
   attempts         INTEGER NOT NULL DEFAULT 0,
   next_attempt_at  INTEGER NOT NULL,
   last_error       TEXT
@@ -85,6 +85,11 @@ class Storage:
         self._db = await aiosqlite.connect(self._db_path)
         self._db.row_factory = aiosqlite.Row
         await self._db.executescript(SCHEMA)
+        # room_id was added to scrobble_queue on 2026-11-25 (for the "session expired" notice)
+        async with self._db.execute("PRAGMA table_info(scrobble_queue)") as cur:
+            columns = {r["name"] for r in await cur.fetchall()}
+        if "room_id" not in columns:
+            await self._db.execute("ALTER TABLE scrobble_queue ADD COLUMN room_id TEXT")
         await self._db.commit()
 
     async def close(self):
@@ -228,13 +233,13 @@ class Storage:
 
     async def enqueue_scrobble(self, matrix_user_id: str, service: str, artist: str,
                                 track: str, album: Optional[str], duration_s: Optional[int],
-                                played_at: int):
+                                played_at: int, room_id: Optional[str] = None):
         now = int(time.time())
         await self._db.execute(
             "INSERT INTO scrobble_queue "
-            "(matrix_user_id, service, artist, track, album, duration_s, played_at, attempts, next_attempt_at) "
-            "VALUES (?,?,?,?,?,?,?,0,?)",
-            (matrix_user_id, service, artist, track, album, duration_s, played_at, now),
+            "(matrix_user_id, service, artist, track, album, duration_s, played_at, room_id, attempts, next_attempt_at) "
+            "VALUES (?,?,?,?,?,?,?,?,0,?)",
+            (matrix_user_id, service, artist, track, album, duration_s, played_at, room_id, now),
         )
         await self._db.commit()
 
@@ -270,6 +275,10 @@ class Storage:
         await self._db.execute(
             "INSERT OR REPLACE INTO recently_scrobbled (matrix_user_id, artist, track, scrobbled_at) VALUES (?,?,?,?)",
             (matrix_user_id, artist, track, scrobbled_at),
+        )
+        # Only the last hour is ever read (!fm love); keep a day.
+        await self._db.execute(
+            "DELETE FROM recently_scrobbled WHERE scrobbled_at < ?", (int(time.time()) - 86400,)
         )
         await self._db.commit()
 

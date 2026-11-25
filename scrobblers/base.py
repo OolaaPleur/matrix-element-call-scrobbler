@@ -26,8 +26,8 @@ class Scrobbler(Protocol):
     async def scrobble(self, creds: UserCreds, track: TrackInfo) -> None: ...
     async def love(self, creds: UserCreds, track: TrackInfo) -> None: ...
 
-    async def start_linking(self, matrix_user_id: str) -> str:
-        """Returns the auth URL to give the user."""
+    async def start_linking(self, matrix_user_id: str) -> tuple[str, str]:
+        """Returns (request_token, auth URL to give the user)."""
 
-    async def finalize_linking(self, matrix_user_id: str, request_token: str) -> UserCreds:
+    async def finalize_linking(self, request_token: str) -> UserCreds:
         """Called by !fm confirm. Raises on failure."""

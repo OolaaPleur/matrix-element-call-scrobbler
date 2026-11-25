@@ -10,7 +10,7 @@ A Matrix bot (`matrix-nio` + E2EE) that listens for custom room events from a co
 
 ```bash
 # ../matrix-element-call-common must be cloned as a sibling directory first
-# Install dependencies (Python 3.11+ recommended; 3.10 works with tomli fallback)
+# Install dependencies (Python 3.11+)
 pip install -r requirements.txt
 
 # Copy and fill in config
@@ -23,7 +23,7 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 python main.py
 ```
 
-Logs go to `logs/scrobbler.log` (rotating, 10 MB × 5). The `data/` directory holds the SQLite DB, device ID, crypto store, and access token — all auto-created on first run.
+Logs go to `logs/scrobbler.log` (INFO and up — `aiosqlite`/`peewee`/`nio` DEBUG used to fill 10 MB every two days; rotating, 10 MB × 5). The `data/` directory holds the SQLite DB, device ID, crypto store, and access token — all auto-created on first run.
 
 ## Architecture
 
@@ -37,12 +37,12 @@ The companion music bot emits two custom Matrix room events:
 
 ### PlayTracker state machine
 
-`on_track_started`: inserts a `play_state` row for each linked, non-blacklisted participant; fires a `now_playing` update to Last.fm immediately.
+`on_track_started`: inserts a `play_state` row for each linked, non-blacklisted participant; fires a `now_playing` update to Last.fm immediately (skipped for events replayed after a restart whose track is already over).
 
 `on_track_finished`: reads `play_state` rows for that `play_id`, checks the Last.fm threshold (`played_s >= 30` and `played_s >= duration/2` or `>= 240`), and enqueues a `scrobble_queue` row for eligible users. Deletes `play_state` rows when done.
 
 Two background asyncio tasks run continuously:
-- **drain loop** (`_drain_once`): polls `scrobble_queue` on a timer, submits to Last.fm, retries with exponential backoff (`BACKOFF = [60, 300, 1800, 7200, 21600]`), drops after 5 failures
+- **drain loop** (`_drain_once`): polls `scrobble_queue` on a timer, submits to Last.fm, retries with exponential backoff (`BACKOFF = [60, 300, 1800, 7200, 21600]`), drops after 5 failures. Errors are classified by the Last.fm error code in the JSON body (`LastFmError`, `scrobblers/lastfm.py`), not by the HTTP status: code 9 (invalid session) disables the user and posts a notice to the room stored in `scrobble_queue.room_id`; codes 6/7 (invalid parameters) and an ignored scrobble (`ScrobbleIgnored`) drop the row; everything else (outages, rate limit, bad/suspended API key, network) is retried. Before 2026-11-25 any "403" in the error text disabled the user — which an API-key problem would have done to everyone — and the notice never went out (the queue had no `room_id` column; `Storage.open()` adds it to old databases).
 - **sweep loop**: deletes `play_state` rows that are older than `2 * duration_s + grace_seconds` (catches tracks the bot missed a `track_finished` for)
 
 ### Storage (`storage.py`)
@@ -100,13 +100,14 @@ Run `/verify <device_id> <fingerprint>` in any Element room as `@youruser:matrix
 ## Filtering (`play_tracker.py:_should_accept_track`)
 
 Before inserting a `play_state` row, incoming `track_started` events are filtered by:
-- `[filter.emitters] allowed_user_ids` — allowlist of Matrix user IDs allowed to emit events (`["*"]` = all)
-- `[filter.sources] allowed` / `denied` — allowlist/denylist of source strings (`"youtube"`, `"youtube_music"`, `"other"`)
-- `[filter.quality] require_high` — if true, only accept events where `metadata_quality == "high"` (artist/track from YouTube metadata tags, not title-parsed)
+- `[emitters] allowed_user_ids` — allowlist of Matrix user IDs allowed to emit events, checked against `event.sender` for both `track_started` and `track_finished` (`["*"]` = all). Until 2026-11-25 it compared `content.emitter.user_id`, which the sender writes itself, so any room member could fake plays; this deployment sets `["@musicbot-oolaa:matrix.org"]`
+- `[sources] allowed` / `denied` — allowlist/denylist of source strings (`"youtube"`, `"youtube_music"`, `"other"`)
+- `[quality] require_high` — if true, only accept events where `metadata_quality == "high"` (artist/track from YouTube metadata tags, not title-parsed)
 - Empty artist or track always drops the event
 
 ## Key design constraints
 
 - `share_group_session` is called before every `room_send` with `ignore_unverified_devices=True`, matching the musicbot approach — messages are encrypted but device verification is not enforced.
+- Replies are written in a small Markdown subset (`**bold**`, `` `code` ``, newlines) and sent with an HTML `formatted_body` built by `bot.markdown_to_html`; `body` keeps the Markdown as the plain-text fallback.
 - The `play_id` is the unit of idempotency. `INSERT OR IGNORE` on `play_state` and checking for existing rows in `on_track_finished` make duplicate events safe.
 - `call_participants` in `track_started` must be non-empty for any scrobbles to happen — if the companion musicbot is restarted while a call is in progress, it must re-seed its participant state before emitting events.

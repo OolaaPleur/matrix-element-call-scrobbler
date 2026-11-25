@@ -1,6 +1,5 @@
 import hashlib
 import logging
-import time
 from typing import Optional
 
 import aiohttp
@@ -10,6 +9,34 @@ from .base import TrackInfo, UserCreds
 logger = logging.getLogger(__name__)
 
 LASTFM_API = "https://ws.audioscrobbler.com/2.0/"
+
+# https://www.last.fm/api/errorcodes
+ERR_INVALID_SESSION = 9
+# The request itself is wrong (invalid parameters / resource): a retry can't succeed.
+# Everything else (outages, rate limit, a bad or suspended API key that may get fixed)
+# goes through the normal retry backoff.
+PERMANENT_ERRORS = {6, 7}
+
+
+class LastFmError(Exception):
+    """An error response from the Last.fm API (JSON body with "error" and "message")."""
+
+    def __init__(self, code: int, message: str, http_status: int):
+        super().__init__(f"Last.fm error {code} (HTTP {http_status}): {message}")
+        self.code = code
+        self.http_status = http_status
+
+    @property
+    def invalid_session(self) -> bool:
+        return self.code == ERR_INVALID_SESSION
+
+    @property
+    def retryable(self) -> bool:
+        return self.code not in PERMANENT_ERRORS
+
+
+class ScrobbleIgnored(Exception):
+    """Last.fm accepted the request but ignored the scrobble; retrying won't change that."""
 
 
 def _sign(params: dict, shared_secret: str) -> str:
@@ -43,51 +70,60 @@ class LastFmScrobbler:
             p["sk"] = sk
         return p
 
+    @staticmethod
+    async def _read(resp: aiohttp.ClientResponse) -> dict:
+        # Last.fm reports errors as a JSON body {"error": <code>, "message": ...}, usually
+        # with a 4xx/5xx status; the code says whether it's the session, the API key or
+        # a temporary outage, which the HTTP status alone doesn't.
+        try:
+            data = await resp.json(content_type=None)
+        except Exception:
+            data = None
+        if isinstance(data, dict) and "error" in data:
+            raise LastFmError(int(data["error"]), str(data.get("message", "")), resp.status)
+        resp.raise_for_status()
+        if not isinstance(data, dict):
+            raise RuntimeError(f"Last.fm returned a non-JSON response (HTTP {resp.status})")
+        return data
+
     async def _post(self, params: dict) -> dict:
         await self._ensure_session()
         params["api_sig"] = _sign(params, self._secret)
         logger.debug("Last.fm POST method=%s", params.get("method"))
         async with self._session.post(LASTFM_API, data=params) as resp:
-            resp.raise_for_status()
-            return await resp.json(content_type=None)
+            return await self._read(resp)
 
     async def _get(self, params: dict) -> dict:
         await self._ensure_session()
         logger.debug("Last.fm GET method=%s", params.get("method"))
         async with self._session.get(LASTFM_API, params=params) as resp:
-            resp.raise_for_status()
-            return await resp.json(content_type=None)
+            return await self._read(resp)
+
+    @staticmethod
+    def _track_params(track: TrackInfo) -> dict:
+        p = {"artist": track.artist, "track": track.track}
+        if track.album:
+            p["album"] = track.album
+        if track.duration_s:
+            p["duration"] = str(track.duration_s)
+        return p
 
     # ── Scrobbler protocol ──────────────────────────────────────────────────
 
     async def now_playing(self, creds: UserCreds, track: TrackInfo) -> None:
-        try:
-            params = self._base_params("track.updateNowPlaying", sk=creds.secret)
-            params.update({"artist": track.artist, "track": track.track})
-            if track.album:
-                params["album"] = track.album
-            if track.duration_s:
-                params["duration"] = str(track.duration_s)
-            await self._post(params)
-        except Exception:
-            logger.debug("now_playing failed (ignored)", exc_info=True)
+        params = self._base_params("track.updateNowPlaying", sk=creds.secret)
+        params.update(self._track_params(track))
+        await self._post(params)
 
     async def scrobble(self, creds: UserCreds, track: TrackInfo) -> None:
         params = self._base_params("track.scrobble", sk=creds.secret)
-        params.update({
-            "artist": track.artist,
-            "track": track.track,
-            "timestamp": str(track.timestamp),
-        })
-        if track.album:
-            params["album"] = track.album
-        if track.duration_s:
-            params["duration"] = str(track.duration_s)
+        params.update(self._track_params(track))
+        params["timestamp"] = str(track.timestamp)
         data = await self._post(params)
-        accepted = data.get("scrobbles", {}).get("@attr", {}).get("accepted", 0)
-        if int(accepted) == 0:
-            ignored_msg = data.get("scrobbles", {}).get("scrobble", {}).get("ignoredMessage", {})
-            raise RuntimeError(f"Last.fm ignored scrobble: {ignored_msg}")
+        scrobbles = data.get("scrobbles", {})
+        if int(scrobbles.get("@attr", {}).get("accepted", 0)) == 0:
+            ignored_msg = scrobbles.get("scrobble", {}).get("ignoredMessage", {})
+            raise ScrobbleIgnored(f"Last.fm ignored scrobble: {ignored_msg}")
         logger.info("Scrobbled '%s' - '%s' for %s", track.artist, track.track, creds.username)
 
     async def love(self, creds: UserCreds, track: TrackInfo) -> None:
@@ -97,7 +133,7 @@ class LastFmScrobbler:
 
     # ── Linking ─────────────────────────────────────────────────────────────
 
-    async def start_linking(self, matrix_user_id: str) -> str:
+    async def start_linking(self, matrix_user_id: str) -> tuple[str, str]:
         params = {"method": "auth.getToken", "api_key": self._api_key, "format": "json"}
         params["api_sig"] = _sign(params, self._secret)
         data = await self._get(params)

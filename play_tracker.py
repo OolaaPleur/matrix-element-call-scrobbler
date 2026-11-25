@@ -5,21 +5,25 @@ from typing import Optional
 
 from config import Config
 from scrobblers.base import TrackInfo, UserCreds
+from scrobblers.lastfm import LastFmError, ScrobbleIgnored
 from storage import Storage
 
 logger = logging.getLogger(__name__)
 
 
-def _should_accept_track(event_content: dict, cfg: Config) -> tuple[bool, str | None]:
-    source          = event_content.get("source", "")
-    emitter_user_id = (event_content.get("emitter") or {}).get("user_id", "")
-    quality         = event_content.get("metadata_quality", "low")
-    artist          = (event_content.get("artist") or "").strip()
-    track           = (event_content.get("track") or "").strip()
+def _emitter_allowed(sender: str, cfg: Config) -> bool:
+    # The event's real sender, not content["emitter"]: anyone in the room could write that.
+    return cfg.emitters_allowed_user_ids == ["*"] or sender in cfg.emitters_allowed_user_ids
 
-    if cfg.emitters_allowed_user_ids != ["*"]:
-        if emitter_user_id not in cfg.emitters_allowed_user_ids:
-            return False, f"emitter not allowed: {emitter_user_id}"
+
+def _should_accept_track(event_content: dict, sender: str, cfg: Config) -> tuple[bool, str | None]:
+    source  = event_content.get("source", "")
+    quality = event_content.get("metadata_quality", "low")
+    artist  = (event_content.get("artist") or "").strip()
+    track   = (event_content.get("track") or "").strip()
+
+    if not _emitter_allowed(sender, cfg):
+        return False, f"emitter not allowed: {sender}"
 
     if cfg.sources_allowed != ["*"]:
         if source not in cfg.sources_allowed:
@@ -49,6 +53,7 @@ class PlayTracker:
         self._grace_seconds = grace_seconds
         self._drain_task: Optional[asyncio.Task] = None
         self._sweep_task: Optional[asyncio.Task] = None
+        self._now_playing_tasks: set[asyncio.Task] = set()  # keep references until done
 
     def start_background_tasks(self, drain_interval: int, sweep_interval: int):
         self._drain_task = asyncio.create_task(self._drain_loop(drain_interval))
@@ -65,8 +70,8 @@ class PlayTracker:
 
     # ── track_started handler ────────────────────────────────────────────────
 
-    async def on_track_started(self, event_content: dict, room_id: str):
-        accept, drop_reason = _should_accept_track(event_content, self._cfg)
+    async def on_track_started(self, event_content: dict, room_id: str, sender: str):
+        accept, drop_reason = _should_accept_track(event_content, sender, self._cfg)
         if not accept:
             logger.info(
                 "track_started dropped: play_id=%s reason=%s artist=%r track=%r source=%r quality=%r",
@@ -84,6 +89,9 @@ class PlayTracker:
         started_at = int(event_content.get("started_at") or time.time())
         participants = event_content.get("call_participants", [])
         logger.debug("play_id=%s participants=%s", play_id, participants)
+        # Events replayed after a restart can be long over: track them (their
+        # track_finished may follow), but don't announce them as playing now.
+        still_playing = time.time() - started_at < max(duration_s, 60)
 
         inserted = 0
         for user_id in participants:
@@ -98,9 +106,12 @@ class PlayTracker:
             logger.info("play_id=%s RECEIVED_STARTED for user=%s", play_id, user_id)
             inserted += 1
 
-            ti = TrackInfo(artist=artist, track=track, album=album,
-                           duration_s=duration_s, timestamp=started_at)
-            asyncio.create_task(self._send_now_playing(creds, ti))
+            if still_playing:
+                ti = TrackInfo(artist=artist, track=track, album=album,
+                               duration_s=duration_s, timestamp=started_at)
+                task = asyncio.create_task(self._send_now_playing(creds, ti))
+                self._now_playing_tasks.add(task)
+                task.add_done_callback(self._now_playing_tasks.discard)
 
         if inserted == 0:
             logger.warning(
@@ -116,11 +127,13 @@ class PlayTracker:
 
     # ── track_finished handler ───────────────────────────────────────────────
 
-    async def on_track_finished(self, event_content: dict, room_id: str):
+    async def on_track_finished(self, event_content: dict, room_id: str, sender: str):
         play_id    = event_content["play_id"]
+        if not _emitter_allowed(sender, self._cfg):
+            logger.info("track_finished dropped: play_id=%s emitter not allowed: %s", play_id, sender)
+            return
         played_s   = int(event_content.get("played_s") or 0)
         reason     = event_content.get("reason", "")
-        finished_at = int(event_content.get("finished_at") or time.time())
         eligible   = set(event_content.get("eligible_participants", []))
 
         rows = await self._storage.get_play_state_rows(play_id)
@@ -133,8 +146,6 @@ class PlayTracker:
             duration_s = row["duration_s"]
             artist     = row["artist"]
             track      = row["track"]
-            album      = row.get("album")
-            started_at = row["started_at"]
 
             if (user_id in eligible
                     and reason == "finished"
@@ -144,9 +155,10 @@ class PlayTracker:
                     service="lastfm",
                     artist=artist,
                     track=track,
-                    album=album,
+                    album=row.get("album"),
                     duration_s=duration_s,
-                    played_at=started_at,
+                    played_at=row["started_at"],
+                    room_id=row["room_id"],
                 )
                 logger.info("play_id=%s ENQUEUED_SCROBBLE for user=%s track='%s - %s'",
                             play_id, user_id, artist, track)
@@ -194,25 +206,37 @@ class PlayTracker:
 
             try:
                 await self._scrobbler.scrobble(creds, ti)
+            except ScrobbleIgnored as exc:
+                logger.warning("Scrobble id=%d user=%s dropped: %s", row_id, user_id, exc)
+                await self._storage.delete_scrobble_queue_row(row_id)
+            except LastFmError as exc:
+                if exc.invalid_session:
+                    await self._disable_expired(row, exc)
+                elif exc.retryable:
+                    logger.warning("Scrobble id=%d attempt=%d failed: %s", row_id, attempts, exc)
+                    await self._storage.bump_scrobble_retry(row_id, attempts, str(exc))
+                else:
+                    # Invalid parameters / resource: a retry won't help.
+                    logger.error("Scrobble id=%d user=%s dropped: %s", row_id, user_id, exc)
+                    await self._storage.delete_scrobble_queue_row(row_id)
+            except Exception as exc:  # network errors, Last.fm outages without a JSON body
+                logger.warning("Scrobble id=%d attempt=%d failed: %s", row_id, attempts, exc)
+                await self._storage.bump_scrobble_retry(row_id, attempts, str(exc))
+            else:
                 await self._storage.delete_scrobble_queue_row(row_id)
                 await self._storage.record_scrobble(user_id, ti.artist, ti.track, ti.timestamp)
                 logger.info("SCROBBLED id=%d user=%s '%s - %s'", row_id, user_id, ti.artist, ti.track)
-            except Exception as exc:
-                err_str = str(exc)
-                status = getattr(getattr(exc, "status", None), "value", None) or ""
-                if "401" in err_str or "403" in err_str or "Invalid session" in err_str:
-                    logger.error("Bad session for user=%s, disabling. Error: %s", user_id, exc)
-                    await self._storage.set_enabled(user_id, False, service)
-                    await self._storage.delete_scrobble_queue_row(row_id)
-                    room_id = row.get("room_id")
-                    if room_id:
-                        await self._send_message(
-                            room_id,
-                            f"{user_id}: your Last.fm session expired. Run `!fm link` to re-link."
-                        )
-                else:
-                    logger.warning("Scrobble id=%d attempt=%d failed: %s", row_id, attempts, exc)
-                    await self._storage.bump_scrobble_retry(row_id, attempts, err_str)
+
+    async def _disable_expired(self, row: dict, exc: Exception):
+        user_id, service = row["matrix_user_id"], row["service"]
+        logger.error("Bad session for user=%s, disabling. Error: %s", user_id, exc)
+        await self._storage.set_enabled(user_id, False, service)
+        await self._storage.delete_scrobble_queue_row(row["id"])
+        if row.get("room_id"):
+            await self._send_message(
+                row["room_id"],
+                f"{user_id}: your Last.fm session expired. Run `!fm link` to re-link."
+            )
 
     # ── Abandoned sweep ──────────────────────────────────────────────────────
 

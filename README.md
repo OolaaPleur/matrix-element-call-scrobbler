@@ -10,12 +10,12 @@ The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/Oolaa
 
 1. Immediately updates "now playing" on Last.fm for every linked participant
 2. Scrobbles the track when it finishes, subject to Last.fm's eligibility rules (≥30 s played and ≥50% of duration, or ≥240 s)
-3. Retries failed scrobbles with exponential backoff (up to 5 attempts over several hours)
+3. Retries failed scrobbles with exponential backoff (up to 5 attempts over several hours); scrobbles Last.fm ignores or rejects as invalid are dropped, an expired session disables the user and tells them in the room
 4. Persists the retry queue in SQLite so scrobbles survive bot restarts
 
 ## Requirements
 
-- Python 3.11+ (3.10 works with the bundled `tomli` fallback)
+- Python 3.11+
 - A Matrix account for the bot (any homeserver)
 - A [Last.fm API account](https://www.last.fm/api/account/create) (free) — you need an API key and shared secret
 - [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot) running in the same room(s)
@@ -71,7 +71,7 @@ See the full [`config/config.toml.example`](config/config.toml.example) for all 
 python main.py
 ```
 
-Logs go to `logs/scrobbler.log` (rotating, 10 MB × 5 files). The `data/` directory (SQLite DB, device ID, crypto store, access token) is created automatically on first run.
+Logs go to `logs/scrobbler.log` (INFO and up, rotating, 10 MB × 5 files). The `data/` directory (SQLite DB, device ID, crypto store, access token) is created automatically on first run.
 
 ## Who Can Use the Bot?
 
@@ -120,9 +120,9 @@ The bot can be configured to only scrobble certain kinds of tracks. All filters 
 
 | Section | Key | Effect |
 |---------|-----|--------|
-| `[filter.emitters]` | `allowed_user_ids` | Allowlist of music bot Matrix IDs (`["*"]` = any) |
-| `[filter.sources]` | `allowed` / `denied` | Allowlist/denylist of source strings (`"youtube_music"`, `"youtube"`, `"other"`) |
-| `[filter.quality]` | `require_high` | If `true`, only scrobble when the music bot provided artist/track from file tags (not title-parsed heuristics) |
+| `[emitters]` | `allowed_user_ids` | Allowlist of music bot Matrix IDs, checked against the event's sender (`["*"]` = anyone in the room, who could then scrobble anything to linked accounts) |
+| `[sources]` | `allowed` / `denied` | Allowlist/denylist of source strings (`"youtube_music"`, `"youtube"`, `"other"`) |
+| `[quality]` | `require_high` | If `true`, only scrobble when the music bot provided artist/track from file tags (not title-parsed heuristics) |
 
 Events with an empty artist or track name are always dropped.
 

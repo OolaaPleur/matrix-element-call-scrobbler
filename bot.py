@@ -1,7 +1,7 @@
 import asyncio
+import html
 import logging
-import os
-import time
+import re
 from pathlib import Path
 from typing import Optional
 
@@ -27,7 +27,7 @@ from nio.crypto import Sas
 from auto_accept import AutoAccept
 from commands import CommandRouter
 from config import Config
-from event_handler import EventHandler
+from event_handler import EVT_TRACK_FINISHED, EventHandler, event_type
 from linking import LinkingManager
 from play_tracker import PlayTracker
 from scrobblers.lastfm import LastFmScrobbler
@@ -37,6 +37,14 @@ logger = logging.getLogger(__name__)
 
 DEVICE_ID_FILE = "data/device_id"
 CRYPTO_STORE_PATH = "data/crypto_store"
+
+
+def markdown_to_html(text: str) -> str:
+    """The little Markdown the replies use: **bold**, `code`, line breaks."""
+    out = html.escape(text, quote=False)
+    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
+    out = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", out)
+    return out.replace("\n", "<br>")
 
 
 class ScrobblerBot:
@@ -190,7 +198,12 @@ class ScrobblerBot:
             await self._client.room_send(
                 room_id=room_id,
                 message_type="m.room.message",
-                content={"msgtype": "m.text", "body": text},
+                content={
+                    "msgtype": "m.text",
+                    "body": text,
+                    "format": "org.matrix.custom.html",
+                    "formatted_body": markdown_to_html(text),
+                },
                 ignore_unverified_devices=True,
             )
         except Exception:
@@ -240,15 +253,14 @@ class ScrobblerBot:
             try:
                 resp = await self._client.room_messages(room_id, start="", limit=500)
                 for event in getattr(resp, "chunk", []):
-                    evt_type = getattr(event, "type", None) or getattr(event, "source", {}).get("type")
-                    if evt_type == "dev.elementcall.musicbot.track_finished":
+                    if event_type(event) == EVT_TRACK_FINISHED:
                         content = getattr(event, "source", {}).get("content", {})
                         play_id = content.get("play_id")
                         if play_id:
                             rows = await self._storage.get_play_state_rows(play_id)
                             if rows:
                                 logger.info("Replay: found pending play_id=%s, processing", play_id)
-                                await self._play_tracker.on_track_finished(content, room_id)
+                                await self._play_tracker.on_track_finished(content, room_id, event.sender)
             except Exception:
                 logger.exception("Replay error for room %s", room_id)
 
@@ -266,10 +278,8 @@ class ScrobblerBot:
         )
         self._event_handler = EventHandler(
             play_tracker=self._play_tracker,
-            command_router=self._commands,
             bot_user_id=self._config.user_id,
         )
-        self._event_handler._send_reply = self._send_message
 
         self._register_event_callbacks()
         self._register_verification_callbacks()

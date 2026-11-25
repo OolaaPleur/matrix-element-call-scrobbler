@@ -31,9 +31,9 @@ allowed = ["*"]
 denied  = []
 
 [emitters]
-# Whitelist of emitter.user_id values to accept events from. ["*"] = allow all.
-# Example: allowed_user_ids = ["@musicbot:matrix.org"]
-allowed_user_ids = ["*"]
+# Matrix users whose track events are accepted (checked against the event's sender).
+# ["*"] = anyone in the room — they could then scrobble anything to linked accounts.
+allowed_user_ids = ["@musicbot:matrix.org"]
 
 [quality]
 # If true, only scrobble events with metadata_quality == "high".
