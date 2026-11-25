@@ -61,6 +61,13 @@ CREATE TABLE IF NOT EXISTS recently_scrobbled (
   PRIMARY KEY (matrix_user_id, scrobbled_at)
 );
 
+-- play_ids whose track_finished was handled, so a replayed track_started or
+-- track_finished for them is ignored (pruned with play_state after the lookback)
+CREATE TABLE IF NOT EXISTS finished_plays (
+  play_id      TEXT PRIMARY KEY,
+  finished_at  INTEGER NOT NULL
+);
+
 CREATE TABLE IF NOT EXISTS room_blacklist (
   matrix_user_id  TEXT NOT NULL,
   room_id         TEXT NOT NULL,
@@ -72,6 +79,8 @@ CREATE INDEX IF NOT EXISTS idx_scrobble_queue_next   ON scrobble_queue(next_atte
 """
 
 BACKOFF = [60, 300, 1800, 7200, 21600]
+# A play with an unknown duration (0) is swept after this many seconds instead.
+UNKNOWN_DURATION_S = 3600
 
 
 class Storage:
@@ -199,16 +208,33 @@ class Storage:
             rows = await cur.fetchall()
         return [dict(r) for r in rows]
 
-    async def delete_play_state(self, play_id: str):
+    async def is_play_finished(self, play_id: str) -> bool:
+        async with self._db.execute("SELECT 1 FROM finished_plays WHERE play_id=?", (play_id,)) as cur:
+            return await cur.fetchone() is not None
+
+    async def finish_play(self, play_id: str, scrobbles: list[dict]):
+        """In one transaction: queue the scrobbles, drop the play's state, mark it finished.
+
+        A crash can't leave a queued scrobble whose play is still pending (which a replay
+        would queue again).
+        """
+        now = int(time.time())
+        await self._db.executemany(
+            "INSERT INTO scrobble_queue "
+            "(matrix_user_id, service, artist, track, album, duration_s, played_at, room_id, attempts, next_attempt_at) "
+            "VALUES (:matrix_user_id,:service,:artist,:track,:album,:duration_s,:played_at,:room_id,0,:now)",
+            [{**s, "now": now} for s in scrobbles],
+        )
         await self._db.execute("DELETE FROM play_state WHERE play_id=?", (play_id,))
+        await self._db.execute("INSERT OR IGNORE INTO finished_plays (play_id, finished_at) VALUES (?,?)", (play_id, now))
         await self._db.commit()
 
     async def sweep_abandoned_plays(self, grace_seconds: int) -> int:
         now = int(time.time())
         async with self._db.execute(
             "SELECT play_id, matrix_user_id, artist, track, duration_s, started_at FROM play_state "
-            "WHERE started_at < (? - 2 * duration_s - ?)",
-            (now, grace_seconds),
+            "WHERE started_at < (? - 2 * (CASE WHEN duration_s > 0 THEN duration_s ELSE ? END) - ?)",
+            (now, UNKNOWN_DURATION_S, grace_seconds),
         ) as cur:
             rows = await cur.fetchall()
         for row in rows:
@@ -227,21 +253,10 @@ class Storage:
     async def drop_old_play_states(self, max_age_seconds: int):
         cutoff = int(time.time()) - max_age_seconds
         await self._db.execute("DELETE FROM play_state WHERE started_at < ?", (cutoff,))
+        await self._db.execute("DELETE FROM finished_plays WHERE finished_at < ?", (cutoff,))
         await self._db.commit()
 
     # ── Scrobble queue ───────────────────────────────────────────────────────
-
-    async def enqueue_scrobble(self, matrix_user_id: str, service: str, artist: str,
-                                track: str, album: Optional[str], duration_s: Optional[int],
-                                played_at: int, room_id: Optional[str] = None):
-        now = int(time.time())
-        await self._db.execute(
-            "INSERT INTO scrobble_queue "
-            "(matrix_user_id, service, artist, track, album, duration_s, played_at, room_id, attempts, next_attempt_at) "
-            "VALUES (?,?,?,?,?,?,?,?,0,?)",
-            (matrix_user_id, service, artist, track, album, duration_s, played_at, room_id, now),
-        )
-        await self._db.commit()
 
     async def get_due_scrobbles(self) -> list[dict]:
         now = int(time.time())
@@ -271,7 +286,9 @@ class Storage:
 
     # ── Recently scrobbled ───────────────────────────────────────────────────
 
-    async def record_scrobble(self, matrix_user_id: str, artist: str, track: str, scrobbled_at: int):
+    async def complete_scrobble(self, row_id: int, matrix_user_id: str, artist: str, track: str, scrobbled_at: int):
+        """After Last.fm accepted it: drop the queue row and remember it for !fm love, atomically."""
+        await self._db.execute("DELETE FROM scrobble_queue WHERE id=?", (row_id,))
         await self._db.execute(
             "INSERT OR REPLACE INTO recently_scrobbled (matrix_user_id, artist, track, scrobbled_at) VALUES (?,?,?,?)",
             (matrix_user_id, artist, track, scrobbled_at),

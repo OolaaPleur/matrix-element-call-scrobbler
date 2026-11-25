@@ -2,6 +2,7 @@ import asyncio
 import html
 import logging
 import re
+import time
 from pathlib import Path
 from typing import Optional
 
@@ -17,7 +18,7 @@ from nio import (
     KeyVerificationStart,
     LocalProtocolError,
     MatrixRoom,
-    UnknownEncryptedEvent,
+    RoomMessagesError,
     RoomMessageText,
     UnknownEvent,
 )
@@ -27,7 +28,7 @@ from nio.crypto import Sas
 from auto_accept import AutoAccept
 from commands import CommandRouter
 from config import Config
-from event_handler import EVT_TRACK_FINISHED, EventHandler, event_type
+from event_handler import EVT_TRACK_FINISHED, EVT_TRACK_STARTED, EventHandler, event_type
 from linking import LinkingManager
 from play_tracker import PlayTracker
 from scrobblers.lastfm import LastFmScrobbler
@@ -41,9 +42,11 @@ CRYPTO_STORE_PATH = "data/crypto_store"
 
 def markdown_to_html(text: str) -> str:
     """The little Markdown the replies use: **bold**, `code`, line breaks."""
-    out = html.escape(text, quote=False)
-    out = re.sub(r"`([^`]+)`", r"<code>\1</code>", out)
-    out = re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", out)
+    parts = re.split(r"(`[^`\n]+`)", html.escape(text, quote=False))
+    out = "".join(
+        f"<code>{part[1:-1]}</code>" if i % 2 else re.sub(r"\*\*(.+?)\*\*", r"<strong>\1</strong>", part)
+        for i, part in enumerate(parts)
+    )
     return out.replace("\n", "<br>")
 
 
@@ -216,13 +219,14 @@ class ScrobblerBot:
         c.add_event_callback(self._on_invite, InviteMemberEvent)
         c.add_event_callback(self._on_room_message, (RoomMessageText,))
         c.add_event_callback(self._on_unknown_event, (UnknownEvent,))
-        # Decrypted events arrive as their decrypted type; catch the raw encrypted
-        # ones too so we can log undecryptable messages
-        c.add_event_callback(self._on_encrypted_event, (UnknownEncryptedEvent,))
 
     async def _on_invite(self, room: MatrixRoom, event: InviteMemberEvent):
         if event.state_key == self._config.user_id:
             await self._auto_accept.on_invite(room, event)
+
+    # Callbacks must not raise: nio has already stored the sync token when it runs them
+    # and doesn't catch their exceptions, so one failing event would silently drop the
+    # rest of that sync batch (other events, other rooms) for good.
 
     async def _on_room_message(self, room: MatrixRoom, event: RoomMessageText):
         if event.sender == self._config.user_id:
@@ -230,16 +234,19 @@ class ScrobblerBot:
         body = getattr(event, "body", "") or ""
         if not body.startswith("!fm"):
             return
-        reply = await self._commands.handle(event.sender, room.room_id, body)
+        try:
+            reply = await self._commands.handle(event.sender, room.room_id, body)
+        except Exception as exc:
+            logger.exception("Command %r from %s failed", body, event.sender)
+            reply = f"That didn't work: {exc}. Try again later."
         if reply:
             await self._send_message(room.room_id, reply)
 
     async def _on_unknown_event(self, room: MatrixRoom, event: UnknownEvent):
-        await self._event_handler.on_room_event(room, event)
-
-    async def _on_encrypted_event(self, room: MatrixRoom, event: UnknownEncryptedEvent):
-        # Undecryptable — log only, matrix-nio will handle decrypted form separately
-        logger.debug("Received encrypted event from %s in %s (may decrypt later)", event.sender, room.room_id)
+        try:
+            await self._event_handler.on_room_event(room, event)
+        except Exception:
+            logger.exception("Handling %s in %s failed", getattr(event, "type", "?"), room.room_id)
 
     # ── Restart-safety replay ────────────────────────────────────────────────
 
@@ -247,20 +254,24 @@ class ScrobblerBot:
         lookback = self._config.recovery_lookback_hours * 3600
         await self._storage.drop_old_play_states(lookback)
 
-        # Walk joined rooms; for each, paginate recent events looking for track_finished
-        # whose play_id is still in play_state (meaning scrobbler missed the event)
+        # The first sync after a long downtime returns only the last few events per room
+        # ("limited" timeline), so walk each room's recent history and feed both track
+        # events through the normal handler, oldest first. Already handled plays are
+        # skipped by PlayTracker (finished_plays), so nothing is scrobbled twice. Only
+        # the lookback window: finished_plays is pruned after it, and older plays were
+        # handled before the restart (or are too old to matter).
+        cutoff_ms = (time.time() - lookback) * 1000
         for room_id, room in self._client.rooms.items():
             try:
                 resp = await self._client.room_messages(room_id, start="", limit=500)
-                for event in getattr(resp, "chunk", []):
-                    if event_type(event) == EVT_TRACK_FINISHED:
-                        content = getattr(event, "source", {}).get("content", {})
-                        play_id = content.get("play_id")
-                        if play_id:
-                            rows = await self._storage.get_play_state_rows(play_id)
-                            if rows:
-                                logger.info("Replay: found pending play_id=%s, processing", play_id)
-                                await self._play_tracker.on_track_finished(content, room_id, event.sender)
+                if isinstance(resp, RoomMessagesError):
+                    logger.warning("Replay: room_messages failed for %s: %s", room_id, resp)
+                    continue
+                for event in reversed(resp.chunk):  # the server returns newest first
+                    if (getattr(event, "server_timestamp", 0) or 0) < cutoff_ms:
+                        continue
+                    if event_type(event) in (EVT_TRACK_STARTED, EVT_TRACK_FINISHED):
+                        await self._event_handler.on_room_event(room, event)
             except Exception:
                 logger.exception("Replay error for room %s", room_id)
 

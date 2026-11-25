@@ -39,11 +39,11 @@ The companion music bot emits two custom Matrix room events:
 
 `on_track_started`: inserts a `play_state` row for each linked, non-blacklisted participant; fires a `now_playing` update to Last.fm immediately (skipped for events replayed after a restart whose track is already over).
 
-`on_track_finished`: reads `play_state` rows for that `play_id`, checks the Last.fm threshold (`played_s >= 30` and `played_s >= duration/2` or `>= 240`), and enqueues a `scrobble_queue` row for eligible users. Deletes `play_state` rows when done.
+`on_track_finished`: ignores play_ids already in `finished_plays`; reads `play_state` rows for that `play_id` (same room), checks the Last.fm threshold (`played_s >= 30` and `played_s >= duration/2` or `>= 240`), and enqueues a `scrobble_queue` row for eligible users. Queueing, deleting the `play_state` rows and recording the play_id in `finished_plays` happen in one transaction (`Storage.finish_play`), so replays can't scrobble twice.
 
 Two background asyncio tasks run continuously:
-- **drain loop** (`_drain_once`): polls `scrobble_queue` on a timer, submits to Last.fm, retries with exponential backoff (`BACKOFF = [60, 300, 1800, 7200, 21600]`), drops after 5 failures. Errors are classified by the Last.fm error code in the JSON body (`LastFmError`, `scrobblers/lastfm.py`), not by the HTTP status: code 9 (invalid session) disables the user and posts a notice to the room stored in `scrobble_queue.room_id`; codes 6/7 (invalid parameters) and an ignored scrobble (`ScrobbleIgnored`) drop the row; everything else (outages, rate limit, bad/suspended API key, network) is retried. Before 2026-11-25 any "403" in the error text disabled the user — which an API-key problem would have done to everyone — and the notice never went out (the queue had no `room_id` column; `Storage.open()` adds it to old databases).
-- **sweep loop**: deletes `play_state` rows that are older than `2 * duration_s + grace_seconds` (catches tracks the bot missed a `track_finished` for)
+- **drain loop** (`_drain_once`): polls `scrobble_queue` on a timer, submits to Last.fm, retries with exponential backoff (`BACKOFF = [60, 300, 1800, 7200, 21600]`), drops after 5 failures. Errors are classified by the Last.fm error code in the JSON body (`LastFmError`, `scrobblers/lastfm.py`), not by the HTTP status: code 9 (invalid session) unlinks the user (disabling let `!fm on` re-enable the dead key) and posts a notice to the room stored in `scrobble_queue.room_id`; codes 6/7 (invalid parameters) and an ignored scrobble (`ScrobbleIgnored`, except ignoredMessage code 5 = daily limit, which is retried) drop the row; 29 (rate limit) also ends the drain pass; everything else (outages, rate limit, bad/suspended API key, network) is retried. Before 2026-11-25 any "403" in the error text disabled the user — which an API-key problem would have done to everyone — and the notice never went out (the queue had no `room_id` column; `Storage.open()` adds it to old databases).
+- **sweep loop**: deletes `play_state` rows that are older than `2 * duration_s + grace_seconds` (catches tracks the bot missed a `track_finished` for); a play with unknown duration (0) counts as `UNKNOWN_DURATION_S` = 1 h, otherwise it was swept within minutes
 
 ### Storage (`storage.py`)
 
@@ -54,6 +54,7 @@ Single `aiosqlite` connection. Last.fm session keys are encrypted at rest with F
 - `scrobble_queue` — durable retry queue
 - `recently_scrobbled` — last scrobble per user, used by `!fm love`
 - `room_blacklist` — per-user room opt-outs
+- `finished_plays` — play_ids whose `track_finished` was handled (replay idempotency), pruned after `recovery_lookback_hours`
 
 ### Scrobbler interface (`scrobblers/base.py`)
 
@@ -63,7 +64,9 @@ Single `aiosqlite` connection. Last.fm session keys are encrypted at rest with F
 
 1. Open storage → setup `AsyncClient` with E2EE store → login (token restore or password) → upload/query keys
 2. Register callbacks: `AutoAccept` (`auto_accept.py`) handles room invites from the `auto_accept_room_invites_from` allowlist; `_register_verification_callbacks` handles SAS verification from the `auto_accept_users` allowlist — these are separate concerns with separate config keys.
-3. Initial `sync(full_state=True)` → replay recent timeline (recover missed `track_finished` events from the last `recovery_lookback_hours`)
+3. Initial `sync(full_state=True)` → replay recent timeline: up to 500 recent events per room (`room_messages`, decrypted by nio) **within `recovery_lookback_hours`** (by `server_timestamp`), oldest first, both `track_started` and `track_finished` through the normal `EventHandler` — the first sync after a long downtime is "limited" and drops older events. `finished_plays` makes it idempotent.
+
+**Event callbacks must never raise**: nio stores the sync token before running callbacks and doesn't catch their exceptions, so a failing callback silently loses the rest of that sync batch. `_on_room_message`/`_on_unknown_event` catch everything; a failed `!fm` command answers with the error.
 4. Start background tasks → enter `sync_forever` loop with exponential backoff on errors
 
 ### User-facing commands

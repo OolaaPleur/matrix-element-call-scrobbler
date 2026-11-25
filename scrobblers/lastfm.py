@@ -12,6 +12,7 @@ LASTFM_API = "https://ws.audioscrobbler.com/2.0/"
 
 # https://www.last.fm/api/errorcodes
 ERR_INVALID_SESSION = 9
+ERR_RATE_LIMIT = 29
 # The request itself is wrong (invalid parameters / resource): a retry can't succeed.
 # Everything else (outages, rate limit, a bad or suspended API key that may get fixed)
 # goes through the normal retry backoff.
@@ -36,7 +37,19 @@ class LastFmError(Exception):
 
 
 class ScrobbleIgnored(Exception):
-    """Last.fm accepted the request but ignored the scrobble; retrying won't change that."""
+    """Last.fm accepted the request but ignored the scrobble (ignoredMessage.code).
+
+    1/2 artist/track ignored, 3/4 timestamp too old/new: final. 5 daily scrobble limit
+    exceeded: try again later.
+    """
+
+    def __init__(self, code: str, message: str):
+        super().__init__(f"Last.fm ignored scrobble (code {code}): {message}")
+        self.code = code
+
+    @property
+    def retryable(self) -> bool:
+        return self.code == "5"
 
 
 def _sign(params: dict, shared_secret: str) -> str:
@@ -122,8 +135,11 @@ class LastFmScrobbler:
         data = await self._post(params)
         scrobbles = data.get("scrobbles", {})
         if int(scrobbles.get("@attr", {}).get("accepted", 0)) == 0:
-            ignored_msg = scrobbles.get("scrobble", {}).get("ignoredMessage", {})
-            raise ScrobbleIgnored(f"Last.fm ignored scrobble: {ignored_msg}")
+            scrobble = scrobbles.get("scrobble", {})
+            if isinstance(scrobble, list):  # a batch; we always send one
+                scrobble = scrobble[0] if scrobble else {}
+            ignored = scrobble.get("ignoredMessage", {}) if isinstance(scrobble, dict) else {}
+            raise ScrobbleIgnored(str(ignored.get("code", "?")), str(ignored.get("#text", "")))
         logger.info("Scrobbled '%s' - '%s' for %s", track.artist, track.track, creds.username)
 
     async def love(self, creds: UserCreds, track: TrackInfo) -> None:

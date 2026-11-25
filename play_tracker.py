@@ -5,7 +5,7 @@ from typing import Optional
 
 from config import Config
 from scrobblers.base import TrackInfo, UserCreds
-from scrobblers.lastfm import LastFmError, ScrobbleIgnored
+from scrobblers.lastfm import ERR_RATE_LIMIT, LastFmError, ScrobbleIgnored
 from storage import Storage
 
 logger = logging.getLogger(__name__)
@@ -72,6 +72,11 @@ class PlayTracker:
 
     async def on_track_started(self, event_content: dict, room_id: str, sender: str):
         accept, drop_reason = _should_accept_track(event_content, sender, self._cfg)
+        if accept and not event_content.get("play_id"):
+            accept, drop_reason = False, "no play_id"
+        if accept and await self._storage.is_play_finished(event_content["play_id"]):
+            logger.debug("track_started play_id=%s already finished (replay), ignored", event_content["play_id"])
+            return
         if not accept:
             logger.info(
                 "track_started dropped: play_id=%s reason=%s artist=%r track=%r source=%r quality=%r",
@@ -128,19 +133,25 @@ class PlayTracker:
     # ── track_finished handler ───────────────────────────────────────────────
 
     async def on_track_finished(self, event_content: dict, room_id: str, sender: str):
-        play_id    = event_content["play_id"]
+        play_id = event_content.get("play_id")
         if not _emitter_allowed(sender, self._cfg):
             logger.info("track_finished dropped: play_id=%s emitter not allowed: %s", play_id, sender)
+            return
+        if not play_id:
+            logger.info("track_finished dropped: no play_id")
+            return
+        if await self._storage.is_play_finished(play_id):
+            logger.debug("track_finished play_id=%s already handled (replay), ignored", play_id)
             return
         played_s   = int(event_content.get("played_s") or 0)
         reason     = event_content.get("reason", "")
         eligible   = set(event_content.get("eligible_participants", []))
 
-        rows = await self._storage.get_play_state_rows(play_id)
+        rows = [r for r in await self._storage.get_play_state_rows(play_id) if r["room_id"] == room_id]
         if not rows:
-            logger.debug("play_id=%s no play_state rows found (already processed or never started)", play_id)
-            return
+            logger.debug("play_id=%s no play_state rows found (never started for a linked user)", play_id)
 
+        scrobbles = []
         for row in rows:
             user_id    = row["matrix_user_id"]
             duration_s = row["duration_s"]
@@ -150,16 +161,16 @@ class PlayTracker:
             if (user_id in eligible
                     and reason == "finished"
                     and _meets_lastfm_threshold(played_s, duration_s)):
-                await self._storage.enqueue_scrobble(
-                    matrix_user_id=user_id,
-                    service="lastfm",
-                    artist=artist,
-                    track=track,
-                    album=row.get("album"),
-                    duration_s=duration_s,
-                    played_at=row["started_at"],
-                    room_id=row["room_id"],
-                )
+                scrobbles.append({
+                    "matrix_user_id": user_id,
+                    "service": "lastfm",
+                    "artist": artist,
+                    "track": track,
+                    "album": row.get("album"),
+                    "duration_s": duration_s,
+                    "played_at": row["started_at"],
+                    "room_id": row["room_id"],
+                })
                 logger.info("play_id=%s ENQUEUED_SCROBBLE for user=%s track='%s - %s'",
                             play_id, user_id, artist, track)
             else:
@@ -168,7 +179,8 @@ class PlayTracker:
                     play_id, user_id, user_id in eligible, reason, played_s, duration_s,
                 )
 
-        await self._storage.delete_play_state(play_id)
+        # Queue, clear the play and mark it finished in one transaction (replay-safe).
+        await self._storage.finish_play(play_id, scrobbles)
 
     # ── Queue drain ──────────────────────────────────────────────────────────
 
@@ -207,14 +219,21 @@ class PlayTracker:
             try:
                 await self._scrobbler.scrobble(creds, ti)
             except ScrobbleIgnored as exc:
-                logger.warning("Scrobble id=%d user=%s dropped: %s", row_id, user_id, exc)
-                await self._storage.delete_scrobble_queue_row(row_id)
+                if exc.retryable:  # daily scrobble limit
+                    logger.warning("Scrobble id=%d attempt=%d deferred: %s", row_id, attempts, exc)
+                    await self._storage.bump_scrobble_retry(row_id, attempts, str(exc))
+                else:
+                    logger.warning("Scrobble id=%d user=%s dropped: %s", row_id, user_id, exc)
+                    await self._storage.delete_scrobble_queue_row(row_id)
             except LastFmError as exc:
                 if exc.invalid_session:
-                    await self._disable_expired(row, exc)
+                    await self._unlink_expired(row, exc)
                 elif exc.retryable:
                     logger.warning("Scrobble id=%d attempt=%d failed: %s", row_id, attempts, exc)
                     await self._storage.bump_scrobble_retry(row_id, attempts, str(exc))
+                    if exc.code == ERR_RATE_LIMIT:
+                        logger.warning("Last.fm rate limit: stopping this drain pass")
+                        return
                 else:
                     # Invalid parameters / resource: a retry won't help.
                     logger.error("Scrobble id=%d user=%s dropped: %s", row_id, user_id, exc)
@@ -223,14 +242,15 @@ class PlayTracker:
                 logger.warning("Scrobble id=%d attempt=%d failed: %s", row_id, attempts, exc)
                 await self._storage.bump_scrobble_retry(row_id, attempts, str(exc))
             else:
-                await self._storage.delete_scrobble_queue_row(row_id)
-                await self._storage.record_scrobble(user_id, ti.artist, ti.track, ti.timestamp)
+                await self._storage.complete_scrobble(row_id, user_id, ti.artist, ti.track, ti.timestamp)
                 logger.info("SCROBBLED id=%d user=%s '%s - %s'", row_id, user_id, ti.artist, ti.track)
 
-    async def _disable_expired(self, row: dict, exc: Exception):
+    async def _unlink_expired(self, row: dict, exc: Exception):
+        # Unlink rather than disable: `!fm on` would just re-enable the dead session key.
+        # The user's other queued scrobbles are dropped as "no valid creds" on their turn.
         user_id, service = row["matrix_user_id"], row["service"]
-        logger.error("Bad session for user=%s, disabling. Error: %s", user_id, exc)
-        await self._storage.set_enabled(user_id, False, service)
+        logger.error("Bad session for user=%s, unlinking. Error: %s", user_id, exc)
+        await self._storage.delete_linked_account(user_id, service)
         await self._storage.delete_scrobble_queue_row(row["id"])
         if row.get("room_id"):
             await self._send_message(
