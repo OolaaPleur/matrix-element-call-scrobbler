@@ -1,5 +1,6 @@
 import asyncio
 import logging
+import signal
 import sys
 from logging.handlers import RotatingFileHandler
 from pathlib import Path
@@ -35,7 +36,18 @@ async def main():
     setup_logging()
     config = Config()
     bot = ScrobblerBot(config)
-    await bot.run()
+    # As PID 1 in a container, SIGTERM has no default action, so `docker stop`
+    # would wait and then SIGKILL. Cancel the bot instead: ScrobblerBot.run
+    # stops the sync loop and closes storage and the client.
+    task = asyncio.current_task()
+    loop = asyncio.get_running_loop()
+    for sig in (signal.SIGTERM, signal.SIGINT):
+        loop.add_signal_handler(sig, task.cancel)
+    try:
+        await bot.run()
+    except asyncio.CancelledError:
+        pass
+    logging.getLogger(__name__).info("Shut down")
 
 
 if __name__ == "__main__":

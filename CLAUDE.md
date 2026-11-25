@@ -23,6 +23,8 @@ python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().d
 python main.py
 ```
 
+**Docker:** `Dockerfile` + `docker-compose.yml` mirror the music bot's: `python:3.14-slim`, deps in `/opt/venv`, `matrix-bot-common` from the GitHub tarball (`COMMON_URL` build arg; the `-e ../` line of `requirements.txt` is filtered out), uid 10001, volumes for `/app/data` and `/app/logs`, `./config` mounted read-only. CI (`.github/workflows/ci.yml`) compiles/imports the modules and publishes `ghcr.io/oolaapleur/matrix-element-call-scrobbler` (`latest`, last tag, sha; amd64+arm64) on every push to `master`. `main.py` cancels the bot on SIGTERM/SIGINT and `ScrobblerBot.run` closes storage in a `finally`: as PID 1 SIGTERM has no default action, and an open aiosqlite connection's non-daemon thread kept the process alive after a cancel during start-up.
+
 Logs go to `logs/scrobbler.log` (INFO and up — `aiosqlite`/`peewee`/`nio` DEBUG used to fill 10 MB every two days; rotating, 10 MB × 5). The `data/` directory holds the SQLite DB, device ID, crypto store, and access token — all auto-created on first run.
 
 ## Architecture

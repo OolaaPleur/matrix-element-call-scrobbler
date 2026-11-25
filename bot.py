@@ -279,47 +279,51 @@ class ScrobblerBot:
 
     async def run(self):
         await self._storage.open()
-        await self._setup_client()
-        await self._login()
-        await self._setup_e2ee()
+        try:
+            await self._setup_client()
+            await self._login()
+            await self._setup_e2ee()
 
-        self._auto_accept = AutoAccept(
-            client=self._client,
-            trusted_users=self._config.auto_accept_room_invites_from,
-        )
-        self._event_handler = EventHandler(
-            play_tracker=self._play_tracker,
-            bot_user_id=self._config.user_id,
-        )
+            self._auto_accept = AutoAccept(
+                client=self._client,
+                trusted_users=self._config.auto_accept_room_invites_from,
+            )
+            self._event_handler = EventHandler(
+                play_tracker=self._play_tracker,
+                bot_user_id=self._config.user_id,
+            )
 
-        self._register_event_callbacks()
-        self._register_verification_callbacks()
+            self._register_event_callbacks()
+            self._register_verification_callbacks()
 
-        # Initial sync to get current state
-        logger.info("Performing initial sync…")
-        await self._client.sync(timeout=30000, full_state=True)
+            # Initial sync to get current state
+            logger.info("Performing initial sync…")
+            await self._client.sync(timeout=30000, full_state=True)
 
-        await self._replay_recent_timeline()
+            await self._replay_recent_timeline()
 
-        self._play_tracker.start_background_tasks(
-            drain_interval=self._config.queue_drain_interval_seconds,
-            sweep_interval=self._config.abandoned_sweep_interval_secs,
-        )
+            self._play_tracker.start_background_tasks(
+                drain_interval=self._config.queue_drain_interval_seconds,
+                sweep_interval=self._config.abandoned_sweep_interval_secs,
+            )
 
-        logger.info("Scrobbler bot running. Syncing…")
-        backoff = 5
-        while True:
-            try:
-                await self._client.sync_forever(timeout=30000, full_state=False)
-                backoff = 5
-            except asyncio.CancelledError:
-                break
-            except Exception:
-                logger.exception("sync_forever error, retrying in %ds", backoff)
-                await asyncio.sleep(backoff)
-                backoff = min(backoff * 2, 300)
-
-        await self._play_tracker.stop()
-        await self._scrobbler.close()
-        await self._storage.close()
-        await self._client.close()
+            logger.info("Scrobbler bot running. Syncing…")
+            backoff = 5
+            while True:
+                try:
+                    await self._client.sync_forever(timeout=30000, full_state=False)
+                    backoff = 5
+                except asyncio.CancelledError:
+                    break
+                except Exception:
+                    logger.exception("sync_forever error, retrying in %ds", backoff)
+                    await asyncio.sleep(backoff)
+                    backoff = min(backoff * 2, 300)
+        finally:
+            # Also on cancellation during start-up (SIGTERM): an open aiosqlite
+            # connection runs a non-daemon thread that keeps the process alive.
+            await self._play_tracker.stop()
+            await self._scrobbler.close()
+            await self._storage.close()
+            if self._client is not None:
+                await self._client.close()

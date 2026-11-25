@@ -15,29 +15,20 @@ The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/Oolaa
 
 ## Requirements
 
-- Python 3.11+
+- Docker, or Python 3.11+ to run it directly
 - A Matrix account for the bot (any homeserver)
 - A [Last.fm API account](https://www.last.fm/api/account/create) (free) — you need an API key and shared secret
 - [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot) running in the same room(s), with `scrobbler_events = true` in the `[bot]` section of its `config.toml` (the music bot doesn't send track events by default)
 
 ## Setup
 
-### 1. Clone and install
+There are two ways to run the bot: the prebuilt Docker image (recommended) or directly on the host. Both read the same `config/config.toml`.
+
+### 1. Configure
 
 ```bash
-# Clone this repo and the shared library as siblings
 git clone https://github.com/OolaaPleur/matrix-element-call-scrobbler
-git clone https://github.com/OolaaPleur/matrix-element-call-common
 cd matrix-element-call-scrobbler
-pip install -r requirements.txt   # resolves ../matrix-element-call-common automatically
-```
-
-> [!NOTE]
-> `requirements.txt` references `../matrix-element-call-common` (the [shared library](https://github.com/OolaaPleur/matrix-element-call-common)). Both repos must be cloned into the same parent directory.
-
-### 2. Configure
-
-```bash
 cp config/config.toml.example config/config.toml
 ```
 
@@ -55,23 +46,66 @@ Edit `config/config.toml` and fill in:
 - `api_key` and `shared_secret` — from your [Last.fm API account](https://www.last.fm/api/account/create)
 
 **`[storage]`**
-- `encryption_key` — generate a Fernet key for encrypting Last.fm session tokens at rest:
+- `encryption_key` — a Fernet key for encrypting Last.fm session tokens at rest. Generate one with either of:
   ```bash
   python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+  docker run --rm ghcr.io/oolaapleur/matrix-element-call-scrobbler python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
   ```
+
+**`[emitters]`**
+- `allowed_user_ids` — the music bot's Matrix user ID (see [Filtering Playback Events](#filtering-playback-events))
 
 **`[behavior]`**
 - `auto_accept_room_invites_from` — list of Matrix user IDs allowed to invite the bot into rooms (typically just yourself)
 
 See the full [`config/config.toml.example`](config/config.toml.example) for all options with comments.
 
-### 3. Run
+### 2a. Run with Docker
+
+The bot runs from the prebuilt image `ghcr.io/oolaapleur/matrix-element-call-scrobbler` (amd64 and arm64), published by CI for every change; the clone is only for `docker-compose.yml` and the example config.
 
 ```bash
+# The bot runs as uid 10001 in the container and the config holds secrets:
+chmod 600 config/config.toml
+sudo chown 10001 config/config.toml
+
+docker compose up -d             # download the image and start the bot
+docker compose logs -f           # watch it start (Ctrl+C to stop watching)
+```
+
+Update to the latest version:
+
+```bash
+git pull
+docker compose pull
+docker compose up -d
+```
+
+- `config/` is mounted read-only. Bot data (SQLite DB with the linked accounts and the scrobble queue, device ID, crypto store, access token, cross-signing keys) lives in the `scrobbler_data` volume, logs in `scrobbler_logs`. **Back up `scrobbler_data`**: without it the bot logs in as a new device that has to be verified again, and every user has to link Last.fm again.
+- Build it yourself (e.g. with your own changes): uncomment `build: .` in `docker-compose.yml` and run `docker compose up -d --build`; the build fetches the shared library from GitHub, so no second clone is needed.
+- Windows: not tested. Docker Desktop runs the same Linux image, so the same commands should work in PowerShell (`Copy-Item` instead of `cp`, skip `chmod`/`chown`).
+
+### 2b. Run without Docker
+
+Requires Python 3.11+.
+
+```bash
+# The shared library must be cloned next to this repo
+cd ..
+git clone https://github.com/OolaaPleur/matrix-element-call-common
+cd matrix-element-call-scrobbler
+
+python3 -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt   # resolves ../matrix-element-call-common automatically
+
 python main.py
 ```
 
-Logs go to `logs/scrobbler.log` (INFO and up, rotating, 10 MB × 5 files). The `data/` directory (SQLite DB, device ID, crypto store, access token) is created automatically on first run.
+> [!NOTE]
+> `requirements.txt` references `../matrix-element-call-common` (the [shared library](https://github.com/OolaaPleur/matrix-element-call-common)). Both repos must be cloned into the same parent directory.
+
+Logs go to `logs/scrobbler.log` (INFO and up, rotating, 10 MB × 5 files). The `data/` directory (SQLite DB, device ID, crypto store, access token) is created automatically on first run. To keep it running, [`systemd/matrix-scrobbler.service`](systemd/matrix-scrobbler.service) is an example user unit (adjust the paths). SIGTERM/Ctrl+C stop the bot cleanly.
 
 ## Who Can Use the Bot?
 
@@ -111,6 +145,8 @@ acc = store.load_account()
 print(acc.identity_keys['ed25519'])
 "
 ```
+
+With Docker, run the same commands inside the container: `docker compose exec scrobbler cat data/device_id`, and the Python snippet with `docker compose exec scrobbler python3 -c "…"`.
 
 Then in Element, run `/verify <device_id> <fingerprint>` from your own account. The bot auto-accepts the cross-signing confirmation.
 

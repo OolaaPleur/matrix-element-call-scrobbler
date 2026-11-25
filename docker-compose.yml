@@ -1,0 +1,17 @@
+services:
+  scrobbler:
+    # The image CI publishes for every push to master. To build from this
+    # checkout instead (e.g. with your own changes), uncomment `build` and run
+    # `docker compose up -d --build`.
+    image: ghcr.io/oolaapleur/matrix-element-call-scrobbler:latest
+    # build: .
+    container_name: scrobbler
+    restart: unless-stopped
+    volumes:
+      - ./config:/app/config:ro
+      - scrobbler_logs:/app/logs
+      - scrobbler_data:/app/data
+
+volumes:
+  scrobbler_logs:
+  scrobbler_data:

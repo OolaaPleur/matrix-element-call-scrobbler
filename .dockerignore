@@ -1,0 +1,11 @@
+.git/
+.github/
+.claude/
+.venv/
+venv/
+__pycache__/
+*.pyc
+config/config.toml
+data/
+logs/
+CLAUDE.local.md
