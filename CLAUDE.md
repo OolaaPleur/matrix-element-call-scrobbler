@@ -103,7 +103,7 @@ Run `/verify <device_id> <fingerprint>` in any Element room as `@youruser:matrix
 ## Filtering (`play_tracker.py:_should_accept_track`)
 
 Before inserting a `play_state` row, incoming `track_started` events are filtered by:
-- `[emitters] allowed_user_ids` — allowlist of Matrix user IDs allowed to emit events, checked against `event.sender` for both `track_started` and `track_finished` (`["*"]` = all). Until 2026-11-25 it compared `content.emitter.user_id`, which the sender writes itself, so any room member could fake plays; this deployment sets `["@musicbot-oolaa:matrix.org"]`
+- `[emitters] allowed_user_ids` — allowlist of Matrix user IDs allowed to emit events, checked against `event.sender` for both `track_started` and `track_finished` (`["*"]` = all). Until 2026-11-25 it compared `content.emitter.user_id`, which the sender writes itself, so any room member could fake plays; set it to the music bot's user ID (this deployment's value is in `CLAUDE.local.md`, not committed)
 - `[sources] allowed` / `denied` — allowlist/denylist of source strings (`"youtube"`, `"youtube_music"`, `"other"`)
 - `[quality] require_high` — if true, only accept events where `metadata_quality == "high"` (artist/track from YouTube metadata tags, not title-parsed)
 - Empty artist or track always drops the event

@@ -18,7 +18,7 @@ The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/Oolaa
 - Python 3.11+
 - A Matrix account for the bot (any homeserver)
 - A [Last.fm API account](https://www.last.fm/api/account/create) (free) — you need an API key and shared secret
-- [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot) running in the same room(s)
+- [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot) running in the same room(s), with `scrobbler_events = true` in the `[bot]` section of its `config.toml` (the music bot doesn't send track events by default)
 
 ## Setup
 
