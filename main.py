@@ -42,7 +42,12 @@ async def main():
     task = asyncio.current_task()
     loop = asyncio.get_running_loop()
     for sig in (signal.SIGTERM, signal.SIGINT):
-        loop.add_signal_handler(sig, task.cancel)
+        try:
+            loop.add_signal_handler(sig, task.cancel)
+        except NotImplementedError:
+            # Windows' event loop has no signal handlers; Ctrl+C still raises
+            # KeyboardInterrupt, which ends up in the same cleanup.
+            break
     try:
         await bot.run()
     except asyncio.CancelledError:

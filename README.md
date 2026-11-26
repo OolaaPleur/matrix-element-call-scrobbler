@@ -105,7 +105,33 @@ python main.py
 > [!NOTE]
 > `requirements.txt` references `../matrix-element-call-common` (the [shared library](https://github.com/OolaaPleur/matrix-element-call-common)). Both repos must be cloned into the same parent directory.
 
-Logs go to `logs/scrobbler.log` (INFO and up, rotating, 10 MB × 5 files). The `data/` directory (SQLite DB, device ID, crypto store, access token) is created automatically on first run. To keep it running, [`systemd/matrix-scrobbler.service`](systemd/matrix-scrobbler.service) is an example user unit (adjust the paths). SIGTERM/Ctrl+C stop the bot cleanly.
+Logs go to `logs/scrobbler.log` (INFO and up, rotating, 10 MB × 5 files). The `data/` directory (SQLite DB, device ID, crypto store, access token) is created automatically on first run. SIGTERM/Ctrl+C stop the bot cleanly.
+
+To keep it running, a systemd user service (`~/.config/systemd/user/matrix-scrobbler.service`; adjust the paths to where you cloned it):
+
+```ini
+[Unit]
+Description=Matrix Element Call scrobbler
+After=network-online.target
+Wants=network-online.target
+
+[Service]
+WorkingDirectory=%h/matrix-element-call-scrobbler
+ExecStart=%h/matrix-element-call-scrobbler/.venv/bin/python main.py
+Environment=PYTHONUNBUFFERED=1
+Restart=on-failure
+RestartSec=30
+
+[Install]
+WantedBy=default.target
+```
+
+```bash
+systemctl --user enable --now matrix-scrobbler
+loginctl enable-linger "$USER"   # keep it running while you're logged out
+```
+
+Windows: not tested. The bot is plain Python, so the same steps should work in PowerShell (`.venv\Scripts\Activate.ps1` instead of `source .venv/bin/activate`); reports welcome.
 
 ## Who Can Use the Bot?
 
