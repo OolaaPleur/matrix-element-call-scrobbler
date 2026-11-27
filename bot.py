@@ -12,10 +12,6 @@ from nio import (
     AsyncClient,
     AsyncClientConfig,
     InviteMemberEvent,
-    KeyVerificationCancel,
-    KeyVerificationKey,
-    KeyVerificationMac,
-    KeyVerificationStart,
     LocalProtocolError,
     MatrixRoom,
     RoomMessagesError,
@@ -23,11 +19,9 @@ from nio import (
     UnknownEvent,
 )
 
-from nio.crypto import Sas
-
 from auto_accept import AutoAccept
 from commands import CommandRouter
-from config import Config, load_credentials, save_credentials
+from config import Config
 from event_handler import EVT_TRACK_FINISHED, EVT_TRACK_STARTED, EventHandler, event_type
 from linking import LinkingManager
 from play_tracker import PlayTracker
@@ -124,77 +118,10 @@ class ScrobblerBot:
             logger.warning("Cross-signing setup failed: %s", exc)
 
     async def _login(self):
-        c = self._config
-        # Restore the saved session: the token is kept in data/credentials.json
-        # (scripts/setup.py); data/access_token is where older installs kept it.
-        token = load_credentials().get("access_token") or ""
-        token_file = Path("data/access_token")
-        if not token and token_file.exists():
-            token = token_file.read_text().strip()
-        if token:
-            self._client.access_token = token
-            self._client.user_id = c.user_id
-            logger.info("Restored the saved session")
-            return
-
-        if not c.password:
-            raise RuntimeError("No saved login (data/credentials.json): run scripts/setup.py first")
-        resp = await self._client.login(c.password, device_name=c.device_name)
-        if hasattr(resp, "access_token"):
-            stored = load_credentials()
-            stored.update({"homeserver": c.homeserver, "user_id": c.user_id, "access_token": resp.access_token})
-            save_credentials(stored)
-            logger.info("Logged in, token saved")
-        else:
-            raise RuntimeError(f"Login failed: {resp}")
-
-    # ── Verification ─────────────────────────────────────────────────────────
-
-    def _register_verification_callbacks(self):
-        c = self._client
-        c.add_to_device_callback(self._on_verification_start, KeyVerificationStart)
-        c.add_to_device_callback(self._on_verification_key, KeyVerificationKey)
-        c.add_to_device_callback(self._on_verification_mac, KeyVerificationMac)
-        c.add_to_device_callback(self._on_verification_cancel, KeyVerificationCancel)
-
-    async def _on_verification_start(self, event: KeyVerificationStart):
-        if event.sender not in self._config.auto_accept_users:
-            logger.info("Ignoring verification from non-trusted %s", event.sender)
-            return
-        logger.info("Auto-accepting SAS verification from %s", event.sender)
-        try:
-            await self._client.accept_key_verification(event.transaction_id)
-            sas = self._client.key_verifications.get(event.transaction_id)
-            if sas is None:
-                logger.warning("No SAS object after accept for %s", event.transaction_id)
-                return
-            await self._client.to_device(sas.share_key())
-        except Exception:
-            logger.exception("Verification start error")
-
-    async def _on_verification_key(self, event: KeyVerificationKey):
-        sas: Optional[Sas] = self._client.key_verifications.get(event.transaction_id)
-        if sas is None:
-            return
-        if event.sender not in self._config.auto_accept_users:
-            return
-        try:
-            await self._client.to_device(sas.accept_sas())
-            await self._client.to_device(sas.confirm_sas())
-        except Exception:
-            logger.exception("Verification key error")
-
-    async def _on_verification_mac(self, event: KeyVerificationMac):
-        sas: Optional[Sas] = self._client.key_verifications.get(event.transaction_id)
-        if sas is None:
-            return
-        try:
-            await self._client.to_device(sas.get_mac())
-        except Exception:
-            logger.exception("Verification mac error")
-
-    async def _on_verification_cancel(self, event: KeyVerificationCancel):
-        logger.info("Verification cancelled by %s: %s", event.sender, event.reason)
+        # The saved session from scripts/setup.py (data/credentials.json).
+        self._client.access_token = self._config.access_token
+        self._client.user_id = self._config.user_id
+        logger.info("Restored the saved session")
 
     # ── Message sending ──────────────────────────────────────────────────────
 
@@ -300,7 +227,6 @@ class ScrobblerBot:
             )
 
             self._register_event_callbacks()
-            self._register_verification_callbacks()
 
             # Initial sync to get current state
             logger.info("Performing initial sync…")

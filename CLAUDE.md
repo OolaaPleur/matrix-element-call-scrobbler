@@ -61,9 +61,9 @@ Single `aiosqlite` connection. Last.fm session keys are encrypted at rest with F
 
 ### Bot startup sequence (`bot.py`)
 
-1. Open storage → setup `AsyncClient` with E2EE store → login (token restore or password) → upload/query keys
-   - Setup: `scripts/setup.py` (one run, idempotent) logs in once (token → `credentials.json`, device → `data/device_id`; password not stored; `data/access_token` is the legacy token file, still read as a fallback) and writes `data/credentials.json` (homeserver, user_id, owners, music_bots, lastfm_api_key/shared_secret, encryption_key; 0600), then restores cross-signing keys via `matrix_bot_common.restore_keys`. Once every step is done it offers a change pass (other account: per-account files moved to `data/previous-account-<ts>/`, DB kept; owners; music bots; Last.fm API key; restore keys again); the storage key is never changeable. `Config` layers the optional `config/config.toml` over it (config wins); `[matrix] password` is only used when there is no saved token
-2. Register callbacks: `AutoAccept` (`auto_accept.py`) handles room invites from the `auto_accept_room_invites_from` allowlist; `_register_verification_callbacks` handles SAS verification from the `auto_accept_users` allowlist — these are separate concerns with separate config keys. `auto_accept_users` (default: setup's owners) is a legacy path from before the bot signed its own device; deliberately left out of the README, setup prompt and example config since 2026-11-27 (users verify the bot by emoji from the bot's own Element session).
+1. Open storage → setup `AsyncClient` with E2EE store → login (the saved token from `data/credentials.json`) → upload/query keys
+   - Setup: `scripts/setup.py` (one run, idempotent) logs in once (token → `credentials.json`, device → `data/device_id`; password not stored) and writes `data/credentials.json` (homeserver, user_id, owners, music_bots, lastfm_api_key/shared_secret, encryption_key; 0600), then restores cross-signing keys via `matrix_bot_common.restore_keys`. Once every step is done it offers a change pass (other account: per-account files moved to `data/previous-account-<ts>/`, DB kept; owners; music bots; Last.fm API key; restore keys again); the storage key is never changeable. `Config` takes the login and keys from `credentials.json` only (no config override, no password login in the bot: a missing token means "run setup.py"); the optional `config/config.toml` can replace the owners (`auto_accept_room_invites_from`) and music bots (`[emitters] allowed_user_ids`)
+2. Register callbacks: `AutoAccept` (`auto_accept.py`) handles room invites from the `auto_accept_room_invites_from` allowlist. The bot doesn't take part in SAS verification (an auto-accepting SAS removed 2026-11-27: it confirmed emoji nobody compared); users verify it from the bot's own Element session.
 3. Initial `sync(full_state=True)` → replay recent timeline: up to 500 recent events per room (`room_messages`, decrypted by nio) **within `recovery_lookback_hours`** (by `server_timestamp`), oldest first, both `track_started` and `track_finished` through the normal `EventHandler` — the first sync after a long downtime is "limited" and drops older events. `finished_plays` makes it idempotent.
 
 **Event callbacks must never raise**: nio stores the sync token before running callbacks and doesn't catch their exceptions, so a failing callback silently loses the rest of that sync batch. `_on_room_message`/`_on_unknown_event` catch everything; a failed `!fm` command answers with the error.
@@ -75,30 +75,7 @@ All commands begin with `!fm` and are handled by `CommandRouter` → `LinkingMan
 
 ## Device Verification
 
-After first run (or after wiping `data/crypto_store/`), verify the bot's device in Element using the `/verify` slash command:
-
-```
-/verify <device_id> <ed25519_fingerprint>
-```
-
-Get the values:
-```bash
-# device_id
-cat data/device_id
-
-# ed25519 fingerprint
-python3 -c "
-from nio.store import SqliteStore
-did = open('data/device_id').read().strip()
-store = SqliteStore('@yourbotname:matrix.org', did, 'data/crypto_store/')
-acc = store.load_account()
-print(acc.identity_keys['ed25519'])
-"
-```
-
-Run `/verify <device_id> <fingerprint>` in any Element room as `@youruser:matrix.org`. The bot auto-accepts the cross-signing.
-
-**Why `/verify` alone is not enough:** Without cross-signing bootstrap, the device shows as "Verification successful" in the dialog but remains "Unverified" in the session list. The bot must upload its own master/self-signing/user-signing keys on startup (via `matrix_bot_common.cross_signing:ensure_cross_signing()`) for Element to complete the full trust chain. This is already wired into `_setup_e2ee` in `bot.py`.
+The bot signs its own device with the account's cross-signing keys (`data/cross_signing_keys.json`) on every start, via `matrix_bot_common.cross_signing:ensure_cross_signing()` in `_setup_e2ee`. `setup.py` gets the keys from secret storage with the recovery key (`matrix_bot_common.restore_keys`); a fresh account gets new keys from the bot. Users verify the bot (green shield) by comparing emoji with the bot's own Element session: see the README.
 
 ## Filtering (`play_tracker.py:_should_accept_track`)
 

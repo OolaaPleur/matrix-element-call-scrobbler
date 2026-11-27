@@ -34,30 +34,24 @@ def save_credentials(data: dict) -> None:
 
 
 class Config:
-    """Settings from config/config.toml (optional) on top of data/credentials.json
-    (scripts/setup.py): a value set in the config wins."""
+    """data/credentials.json (scripts/setup.py) plus the optional config/config.toml;
+    the room-invite and music-bot lists from setup can be replaced there."""
 
     def __init__(self, path: str = "config/config.toml"):
         config_path = Path(path)
         data = tomllib.loads(config_path.read_text(encoding="utf-8")) if config_path.is_file() else {}
         stored = load_credentials()
 
-        m = data.get("matrix", {})
-        self.homeserver   = m.get("homeserver") or stored.get("homeserver")
-        self.user_id      = m.get("user_id") or stored.get("user_id")
-        # Only needed when there is no saved token (data/access_token) yet.
-        self.password     = m.get("password")
-        self.device_name  = m.get("device_name", "scrobbler")
+        # The login and the keys come from setup only.
+        self.homeserver           = stored.get("homeserver")
+        self.user_id              = stored.get("user_id")
+        self.access_token         = stored.get("access_token")
+        self.lastfm_api_key       = stored.get("lastfm_api_key")
+        self.lastfm_shared_secret = stored.get("lastfm_shared_secret")
+        self.encryption_key       = stored.get("encryption_key")
         owners = stored.get("owners", [])
-        self.auto_accept_users = m.get("verification", {}).get("auto_accept_users", owners)
 
-        lf = data.get("lastfm", {})
-        self.lastfm_api_key       = lf.get("api_key") or stored.get("lastfm_api_key")
-        self.lastfm_shared_secret = lf.get("shared_secret") or stored.get("lastfm_shared_secret")
-
-        st = data.get("storage", {})
-        self.encryption_key = st.get("encryption_key") or stored.get("encryption_key")
-        self.db_path        = st.get("db_path", "data/scrobbler.db")
+        self.db_path = data.get("storage", {}).get("db_path", "data/scrobbler.db")
 
         bh = data.get("behavior", {})
         self.auto_accept_room_invites_from = bh.get("auto_accept_room_invites_from", owners)
@@ -79,10 +73,10 @@ class Config:
         self.quality_require_high = ql.get("require_high", False)
 
         missing = [name for name, value in [
-            ("matrix.homeserver", self.homeserver), ("matrix.user_id", self.user_id),
-            ("lastfm.api_key", self.lastfm_api_key), ("lastfm.shared_secret", self.lastfm_shared_secret),
-            ("storage.encryption_key", self.encryption_key),
+            ("homeserver", self.homeserver), ("user_id", self.user_id), ("access_token", self.access_token),
+            ("lastfm_api_key", self.lastfm_api_key), ("lastfm_shared_secret", self.lastfm_shared_secret),
+            ("encryption_key", self.encryption_key),
         ] if not value]
         if missing:
-            raise SystemExit("Missing settings: " + ", ".join(missing)
-                             + ". Run scripts/setup.py first (see the README), or set them in the config.")
+            raise SystemExit("Missing in data/credentials.json: " + ", ".join(missing)
+                             + ". Run scripts/setup.py first (see the README).")

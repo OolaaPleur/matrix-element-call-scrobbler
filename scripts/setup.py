@@ -35,7 +35,6 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
-LEGACY_TOKEN_FILE = DATA / "access_token"  # where older installs kept the token
 DEVICE_ID_FILE = DATA / "device_id"
 sys.path.insert(0, str(ROOT))
 import config as bot_config  # noqa: E402
@@ -112,7 +111,7 @@ def config_overrides(section, keys):
     if not path.is_file():
         return []
     table = tomllib.loads(path.read_text(encoding="utf-8")).get(section, {})
-    return [key for key in keys if key in table and (table[key] or isinstance(table[key], list))]
+    return [key for key in keys if key in table]
 
 
 def ask_ids(stored, key, section, config_key, empty):
@@ -133,7 +132,7 @@ def ask_ids(stored, key, section, config_key, empty):
 
 # What belongs to the bot's account, moved aside when it changes. The database
 # (linked Last.fm accounts, scrobble queue) stays.
-ACCOUNT_FILES = ["crypto_store", "device_id", "access_token", "cross_signing_keys.json",
+ACCOUNT_FILES = ["crypto_store", "device_id", "cross_signing_keys.json",
                  "cross_signing_keys.json.stale-*"]
 
 
@@ -165,16 +164,12 @@ def check_user_id(value):
 
 def step_login(stored, change=False):
     print("1. Login")
-    token = stored.get("access_token") or (
-        LEGACY_TOKEN_FILE.read_text().strip() if LEGACY_TOKEN_FILE.is_file() else "")
+    token = stored.get("access_token")
     if stored.get("homeserver") and stored.get("user_id") and token:
         try:
             request("GET", f"{stored['homeserver']}/_matrix/client/v3/account/whoami", token=token)
             already(f"{'Now' if change else 'Already done'}: {stored['user_id']}")
             if not change:
-                return token
-            if config_overrides("matrix", ["homeserver", "user_id"]):
-                say("[matrix] homeserver/user_id in the config (legacy) override this; remove them there.")
                 return token
             new_id = input(INDENT + "Enter to keep, or another account's user ID: ").strip()
             if not new_id or new_id == stored["user_id"]:
@@ -211,7 +206,6 @@ def step_login(stored, change=False):
         sys.exit(f"Can't reach {homeserver}: {exc}")
     DATA.mkdir(parents=True, exist_ok=True)
     DEVICE_ID_FILE.write_text(resp["device_id"])
-    LEGACY_TOKEN_FILE.unlink(missing_ok=True)
     stored.update({"homeserver": homeserver, "user_id": resp["user_id"], "access_token": resp["access_token"]})
     bot_config.save_credentials(stored)
     done(f"Device {resp['device_id']}, saved in data/credentials.json")
@@ -256,9 +250,6 @@ def step_lastfm(stored, change=False):
     if stored.get("lastfm_api_key") and stored.get("lastfm_shared_secret"):
         already(f"{'Now' if change else 'Already done'}: API key {stored['lastfm_api_key'][:4]}…")
         if not change:
-            return
-        if config_overrides("lastfm", ["api_key", "shared_secret"]):
-            say("[lastfm] in the config overrides this; change it there.")
             return
         say("Linked accounts belong to the API key: with another one, everyone links Last.fm again.")
         if not yes("Use another API key?"):

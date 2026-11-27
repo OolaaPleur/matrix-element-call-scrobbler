@@ -1,10 +1,6 @@
-# Every setting here is optional; the defaults work. A value set here overrides
-# the one from setup.
+# Every setting here is optional; the defaults work.
 # The bot's login, the Last.fm API key and the storage key come from
 # scripts/setup.py (data/credentials.json); run it again to change them.
-
-[matrix]
-device_name = "scrobbler"
 
 [storage]
 db_path        = "data/scrobbler.db"
