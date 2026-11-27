@@ -22,54 +22,26 @@ The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/Oolaa
 
 ## Setup
 
-There are two ways to run the bot: the prebuilt Docker image (recommended) or directly on the host. Both read the same `config/config.toml`.
+There are two ways to run the bot: the prebuilt Docker image (recommended) or directly on the host. Either way, `scripts/setup.py` asks once for everything the bot needs:
 
-### 1. Configure
+- the bot's Matrix user ID and password (it logs in once; the password is not stored),
+- your Matrix user ID (may invite the bot into rooms and verify it) and the music bot's user ID (whose track events are scrobbled),
+- the API key and shared secret of your [Last.fm API account](https://www.last.fm/api/account/create),
+- the key that encrypts the linked Last.fm accounts in the database (Enter for a new one),
+- the bot account's recovery key, if the account was set up in Element (see [Device Verification](#device-verification)).
+
+It keeps them in `data/credentials.json` (mode 600), so there is no config to fill in. Run it again if a step failed: done steps are skipped.
+
+### Run with Docker
+
+The bot runs from the prebuilt image `ghcr.io/oolaapleur/matrix-element-call-scrobbler` (amd64 and arm64), published by CI for every change; the clone is only for `docker-compose.yml` and the optional config.
 
 ```bash
 git clone https://github.com/OolaaPleur/matrix-element-call-scrobbler
 cd matrix-element-call-scrobbler
-cp config/config.toml.example config/config.toml
-```
 
-Edit `config/config.toml` and fill in:
-
-**`[matrix]`**
-- `homeserver` — your Matrix homeserver URL (e.g. `https://matrix.org`)
-- `user_id` — the bot's full Matrix user ID (e.g. `@my-scrobbler:matrix.org`)
-- `password` — the bot account password
-
-**`[matrix.verification]`**
-- `auto_accept_users` — your own Matrix user ID; the bot will auto-accept cross-signing verification requests from these users
-
-**`[lastfm]`**
-- `api_key` and `shared_secret` — from your [Last.fm API account](https://www.last.fm/api/account/create)
-
-**`[storage]`**
-- `encryption_key` — a Fernet key for encrypting Last.fm session tokens at rest. Generate one with either of:
-  ```bash
-  python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-  docker run --rm ghcr.io/oolaapleur/matrix-element-call-scrobbler python3 -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
-  ```
-
-**`[emitters]`**
-- `allowed_user_ids` — the music bot's Matrix user ID (see [Filtering Playback Events](#filtering-playback-events))
-
-**`[behavior]`**
-- `auto_accept_room_invites_from` — list of Matrix user IDs allowed to invite the bot into rooms (typically just yourself)
-
-See the full [`config/config.toml.example`](config/config.toml.example) for all options with comments.
-
-### 2a. Run with Docker
-
-The bot runs from the prebuilt image `ghcr.io/oolaapleur/matrix-element-call-scrobbler` (amd64 and arm64), published by CI for every change; the clone is only for `docker-compose.yml` and the example config.
-
-```bash
-# The bot runs as uid 10001 in the container and the config holds secrets:
-chmod 600 config/config.toml
-sudo chown 10001 config/config.toml
-
-docker compose up -d             # download the image and start the bot
+docker compose run --rm scrobbler python3 scripts/setup.py   # asks for the values above
+docker compose up -d             # start the bot
 docker compose logs -f           # watch it start (Ctrl+C to stop watching)
 ```
 
@@ -81,31 +53,32 @@ docker compose pull
 docker compose up -d
 ```
 
-- `config/` is mounted read-only. Bot data (SQLite DB with the linked accounts and the scrobble queue, device ID, crypto store, access token, cross-signing keys) lives in the `scrobbler_data` volume, logs in `scrobbler_logs`. **Back up `scrobbler_data`**: without it the bot logs in as a new device that has to be verified again, and every user has to link Last.fm again.
+- Bot data (setup values, SQLite DB with the linked accounts and the scrobble queue, device ID, crypto store, access token, cross-signing keys) lives in the `scrobbler_data` volume, logs in `scrobbler_logs`. **Back up `scrobbler_data`**: without it the bot logs in as a new device that has to be verified again, and every user has to link Last.fm again.
 - Build it yourself (e.g. with your own changes): uncomment `build: .` in `docker-compose.yml` and run `docker compose up -d --build`; the build fetches the shared library from GitHub, so no second clone is needed.
-- Windows: not tested. Docker Desktop runs the same Linux image, so the same commands should work in PowerShell (`Copy-Item` instead of `cp`, skip `chmod`/`chown`).
+- Windows: not tested. Docker Desktop runs the same Linux image, so the same commands should work in PowerShell.
 
-### 2b. Run without Docker
+### Run without Docker
 
 Requires Python 3.11+.
 
 ```bash
 # The shared library must be cloned next to this repo
-cd ..
 git clone https://github.com/OolaaPleur/matrix-element-call-common
+git clone https://github.com/OolaaPleur/matrix-element-call-scrobbler
 cd matrix-element-call-scrobbler
 
 python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt   # resolves ../matrix-element-call-common automatically
 
+python scripts/setup.py
 python main.py
 ```
 
 > [!NOTE]
 > `requirements.txt` references `../matrix-element-call-common` (the [shared library](https://github.com/OolaaPleur/matrix-element-call-common)). Both repos must be cloned into the same parent directory.
 
-Logs go to `logs/scrobbler.log` (INFO and up, rotating, 10 MB × 5 files). The `data/` directory (SQLite DB, device ID, crypto store, access token) is created automatically on first run. SIGTERM/Ctrl+C stop the bot cleanly.
+Logs go to `logs/scrobbler.log` (INFO and up, rotating, 10 MB × 5 files). SIGTERM/Ctrl+C stop the bot cleanly.
 
 To keep it running, a systemd user service (`~/.config/systemd/user/matrix-scrobbler.service`; adjust the paths to where you cloned it):
 
@@ -133,6 +106,10 @@ loginctl enable-linger "$USER"   # keep it running while you're logged out
 
 Windows: not tested. The bot is plain Python, so the same steps should work in PowerShell (`.venv\Scripts\Activate.ps1` instead of `source .venv/bin/activate`); reports welcome.
 
+### Optional settings
+
+The [filters](#filtering-playback-events) and timings live in an optional config: `cp config/config.toml.example config/config.toml` and edit it (mounted read-only into the container; restart the bot after a change). A value set there overrides the one from `setup.py`.
+
 ## Who Can Use the Bot?
 
 The bot owner controls which rooms the bot joins (via `auto_accept_room_invites_from`). Once the bot is in a room, **any Matrix user** in that room can link their own Last.fm account and receive scrobbles — they just need to participate in Element Call sessions while the music bot is playing.
@@ -155,30 +132,22 @@ All commands are sent as regular Matrix messages in the room (prefix `!fm`):
 
 ## Device Verification
 
-After first run (or after wiping `data/crypto_store/`), verify the bot's Matrix device to establish full E2EE trust. Get the values to verify with:
+The bot signs its own device with the account's cross-signing keys. If the account was set up in Element (the usual case: you created it there and set up recovery), it already has keys, and `setup.py` restores them with the account's **recovery key**. A fresh account gets its keys from the bot on first start.
+
+To restore them later (skipped in setup, lost `data/`), run this and restart the bot:
 
 ```bash
-# Device ID
-cat data/device_id
-
-# Ed25519 fingerprint
-python3 -c "
-from nio.store import SqliteStore
-did = open('data/device_id').read().strip()
-user_id = 'YOUR_BOT_USER_ID'   # e.g. @my-scrobbler:matrix.org
-store = SqliteStore(user_id, did, 'data/crypto_store/')
-acc = store.load_account()
-print(acc.identity_keys['ed25519'])
-"
+docker compose exec scrobbler python3 -m matrix_bot_common.restore_keys
+python -m matrix_bot_common.restore_keys        # without Docker, in the bot's directory
 ```
 
-With Docker, run the same commands inside the container: `docker compose exec scrobbler cat data/device_id`, and the Python snippet with `docker compose exec scrobbler python3 -c "…"`.
+**No recovery key?** The bot can replace the account's keys, but only when asked to: start it once with `CROSS_SIGNING_ALLOW_RESET=1` (Docker: add `environment: [CROSS_SIGNING_ALLOW_RESET=1]` to the service, remove it afterwards). On homeservers with OAuth login (matrix.org) the log then shows a link: open it, log in as the bot, approve the reset, and restart the bot. Everyone who verified the bot has to verify it again.
 
-Then in Element, run `/verify <device_id> <fingerprint>` from your own account. The bot auto-accepts the cross-signing confirmation.
+**Verifying the bot (recommended)** adds the green shield in Element. Log in to Element as the bot in a separate browser or private window (skip this if it is still logged in from when you created the account; if Element asks to verify that session, use the recovery key, **never "Reset"**). Then in your own Element open the bot's profile → **Verify**, accept in the bot's session and compare the emoji. You can log that session out afterwards.
 
 ## Filtering Playback Events
 
-The bot can be configured to only scrobble certain kinds of tracks. All filters are in `config/config.toml`:
+The bot can be configured to only scrobble certain kinds of tracks. All filters are in the optional `config/config.toml` (see [Optional settings](#optional-settings)):
 
 | Section | Key | Effect |
 |---------|-----|--------|
@@ -193,6 +162,7 @@ Events with an empty artist or track name are always dropped.
 | File | Purpose |
 |------|---------|
 | `bot.py` | Startup, E2EE setup, sync loop with exponential backoff |
+| `scripts/setup.py` | One-time setup: login, IDs, Last.fm and storage keys into `data/credentials.json`, cross-signing key restore |
 | `event_handler.py` | Dispatches Matrix events to the tracker |
 | `play_tracker.py` | Core state machine: now-playing, scrobble eligibility, durable retry queue, sweep of abandoned plays |
 | `storage.py` | SQLite via `aiosqlite`; Last.fm session keys encrypted at rest with Fernet |

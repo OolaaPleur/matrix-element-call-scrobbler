@@ -13,11 +13,8 @@ A Matrix bot (`matrix-nio` + E2EE) that listens for custom room events from a co
 # Install dependencies (Python 3.11+)
 pip install -r requirements.txt
 
-# Copy and fill in config
-cp config/config.toml.example config/config.toml
-
-# Generate a Fernet encryption key for the storage section
-python -c "from cryptography.fernet import Fernet; print(Fernet.generate_key().decode())"
+# One-time setup: login, IDs, Last.fm and storage keys, cross-signing keys (config is optional)
+python scripts/setup.py
 
 # Run
 python main.py
@@ -65,6 +62,7 @@ Single `aiosqlite` connection. Last.fm session keys are encrypted at rest with F
 ### Bot startup sequence (`bot.py`)
 
 1. Open storage → setup `AsyncClient` with E2EE store → login (token restore or password) → upload/query keys
+   - Setup: `scripts/setup.py` (one run, idempotent) logs in once (token → `data/access_token`, device → `data/device_id`; password not stored) and writes `data/credentials.json` (homeserver, user_id, owners, music_bots, lastfm_api_key/shared_secret, encryption_key; 0600), then restores cross-signing keys via `matrix_bot_common.restore_keys`. `Config` layers the optional `config/config.toml` over it (config wins); `[matrix] password` is only used when there is no saved token
 2. Register callbacks: `AutoAccept` (`auto_accept.py`) handles room invites from the `auto_accept_room_invites_from` allowlist; `_register_verification_callbacks` handles SAS verification from the `auto_accept_users` allowlist — these are separate concerns with separate config keys.
 3. Initial `sync(full_state=True)` → replay recent timeline: up to 500 recent events per room (`room_messages`, decrypted by nio) **within `recovery_lookback_hours`** (by `server_timestamp`), oldest first, both `track_started` and `track_finished` through the normal `EventHandler` — the first sync after a long downtime is "limited" and drops older events. `finished_plays` makes it idempotent.
 

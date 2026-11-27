@@ -135,6 +135,8 @@ class ScrobblerBot:
                 logger.info("Restored session from token file")
                 return
 
+        if not c.password:
+            raise RuntimeError("No saved login (data/access_token): run scripts/setup.py first")
         resp = await self._client.login(c.password, device_name=c.device_name)
         if hasattr(resp, "access_token"):
             token_file.write_text(resp.access_token)
