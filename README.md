@@ -4,6 +4,17 @@ A Matrix bot that listens for playback events from [matrix-element-call-musicbot
 
 Multiple users in the same Element Call session each get their own scrobbles to their own Last.fm account — the bot handles all of them in parallel.
 
+## Contents
+
+- [How it works](#how-it-works)
+- [Requirements](#requirements)
+- Setup: [with Docker](#run-with-docker) · [without Docker](#run-without-docker) · [optional settings](#optional-settings)
+- [Who can use the bot?](#who-can-use-the-bot)
+- [User commands](#user-commands)
+- [Device verification](#device-verification)
+- [Filtering playback events](#filtering-playback-events)
+- [Architecture](#architecture)
+
 ## How It Works
 
 The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot). When the music bot starts playing a track in an Element Call session, it emits custom Matrix room events carrying the track metadata and the list of active call participants. The scrobbler:
