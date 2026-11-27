@@ -14,6 +14,8 @@ python3 -m venv .venv
 source .venv/bin/activate
 pip install -r requirements.txt   # resolves ../matrix-element-call-common automatically
 
+cp config/config.example.toml config/config.toml
+nano config/config.toml           # settings (optional, the defaults work)
 python scripts/setup.py
 python main.py
 ```

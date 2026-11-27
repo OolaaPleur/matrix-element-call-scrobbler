@@ -25,11 +25,14 @@ You need:
 
 `scripts/setup.py` asks once for everything: the bot's user ID and password (the password is not stored), your user ID (the bot joins rooms you invite it to; Enter to skip), the music bot's user ID, the Last.fm key and secret, the key that encrypts the linked Last.fm accounts (Enter for a new one) and the account's recovery key ([Device Verification](#device-verification)). It keeps them in `data/credentials.json` (mode 600), so there is no config to fill in. Run it again if a step failed: done steps are skipped.
 
-The bot runs from the prebuilt image `ghcr.io/oolaapleur/matrix-element-call-scrobbler` (amd64 and arm64); the clone only provides `docker-compose.yml` and the optional config.
+The bot runs from the prebuilt image `ghcr.io/oolaapleur/matrix-element-call-scrobbler` (amd64 and arm64); the clone only provides `docker-compose.yml` and the example config.
 
 ```bash
 git clone https://github.com/OolaaPleur/matrix-element-call-scrobbler
 cd matrix-element-call-scrobbler
+
+cp config/config.example.toml config/config.toml
+nano config/config.toml          # settings (optional, the defaults work)
 
 docker compose run --rm scrobbler python3 scripts/setup.py   # asks for the values above
 docker compose up -d             # start the bot
@@ -53,7 +56,7 @@ docker compose up -d
 
 ### Optional settings
 
-Filters and timings live in an optional config: `cp config/config.toml.example config/config.toml`, edit it, restart the bot. A value set there overrides the one from `setup.py`.
+Filters and timings live in `config/config.toml` (copied from `config/config.example.toml`); restart the bot after a change. A value set there overrides the one from `setup.py`.
 
 ## User Commands
 

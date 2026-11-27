@@ -1,5 +1,5 @@
 # Optional: scripts/setup.py asks for everything the bot needs and keeps it in
-# data/credentials.json. Copy this file to config/config.toml only to change the
+# data/credentials.json. Copy this file to config/config.toml to change the
 # settings below; a value set here overrides the one from setup.
 
 [matrix]
