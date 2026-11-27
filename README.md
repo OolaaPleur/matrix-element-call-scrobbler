@@ -25,7 +25,7 @@ The scrobbler pairs with [matrix-element-call-musicbot](https://github.com/Oolaa
 There are two ways to run the bot: the prebuilt Docker image (recommended) or directly on the host. Either way, `scripts/setup.py` asks once for everything the bot needs:
 
 - the bot's Matrix user ID and password (it logs in once; the password is not stored),
-- your Matrix user ID (may invite the bot into rooms and verify it) and the music bot's user ID (whose track events are scrobbled),
+- your Matrix user ID (may invite the bot into rooms and verify it; Enter to skip, more users go into `auto_accept_room_invites_from` and `auto_accept_users` in the optional config) and the music bot's user ID (whose track events are scrobbled),
 - the API key and shared secret of your [Last.fm API account](https://www.last.fm/api/account/create),
 - the key that encrypts the linked Last.fm accounts in the database (Enter for a new one),
 - the bot account's recovery key, if the account was set up in Element (see [Device Verification](#device-verification)).

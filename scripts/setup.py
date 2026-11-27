@@ -6,8 +6,8 @@ Asks for everything the bot needs and keeps it in data/credentials.json
 
 1. the bot's Matrix login: logs in once with the password (the password is
    not stored; the token goes to data/access_token);
-2. your Matrix user ID (may invite the bot into rooms and verify it) and the
-   music bot's user ID (whose track events are scrobbled);
+2. your Matrix user ID (may invite the bot into rooms and verify it; Enter to
+   skip, more users in the config) and the music bot's user ID (whose track events are scrobbled);
 3. the Last.fm API key and shared secret;
 4. the key that encrypts the Last.fm sessions in the database (new, or the
    one of an earlier install whose scrobbler.db you keep);
@@ -127,8 +127,12 @@ def step_login(stored):
 
 def step_settings(stored):
     changed = False
-    if not stored.get("owners"):
-        stored["owners"] = [ask_user_id("Your Matrix user ID (may invite the bot and verify it): ")]
+    if "owners" not in stored:
+        owner = input("Your Matrix user ID; the bot accepts your room invites and verification requests "
+                      "(Enter to skip; more users go into the config): ").strip()
+        if owner and (not owner.startswith("@") or ":" not in owner):
+            sys.exit(f"A full user ID is needed: @name:server (got {owner!r})")
+        stored["owners"] = [owner] if owner else []
         changed = True
     if not stored.get("music_bots"):
         stored["music_bots"] = [ask_user_id("The music bot's Matrix user ID: ")]
@@ -151,7 +155,7 @@ def step_settings(stored):
         changed = True
     if changed:
         bot_config.save_credentials(stored)
-    print(f"2. Settings: owner {', '.join(stored['owners'])}, music bot {', '.join(stored['music_bots'])}, "
+    print(f"2. Settings: owner {', '.join(stored['owners']) or 'none (the bot joins no room by itself)'}, music bot {', '.join(stored['music_bots'])}, "
           "Last.fm and storage keys saved.")
 
 
