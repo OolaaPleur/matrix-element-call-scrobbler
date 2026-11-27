@@ -85,6 +85,7 @@ def say(text):
 
 
 WORKED = False  # set when a step did something on this run
+KEYS_SKIPPED = False  # the recovery key was skipped: setup isn't complete
 
 
 def done(text):
@@ -162,34 +163,9 @@ def check_user_id(value):
     return value
 
 
-def step_login(stored, change=False):
-    print("1. Login")
-    token = stored.get("access_token")
-    if stored.get("homeserver") and stored.get("user_id") and token:
-        try:
-            request("GET", f"{stored['homeserver']}/_matrix/client/v3/account/whoami", token=token)
-            already(f"{'Now' if change else 'Already done'}: {stored['user_id']}")
-            if not change:
-                return token
-            new_id = input(INDENT + "Enter to keep, or another account's user ID: ").strip()
-            if not new_id or new_id == stored["user_id"]:
-                return token
-            check_user_id(new_id)
-            say("The bot's keys and device belong to its account: they are moved aside, and the next")
-            say("steps set up the new account. Linked Last.fm accounts stay.")
-            if not yes(f"Switch the bot to {new_id}?"):
-                return token
-            move_account_files()
-            for key in ("homeserver", "user_id", "access_token"):
-                stored.pop(key, None)
-            stored["user_id"] = new_id
-            bot_config.save_credentials(stored)
-        except MatrixError as exc:
-            if exc.status != 401:
-                sys.exit(f"Checking the saved login failed: {exc}")
-            say("The saved token no longer works (device logged out?), logging in again.")
-    user_id = stored.get("user_id") or check_user_id(ask("Scrobbler bot's Matrix user ID (e.g. @scrobbler:matrix.org): "))
-    homeserver = stored.get("homeserver") or discover_homeserver(user_id.split(":", 1)[1])
+def password_login(user_id, homeserver=None):
+    """Log in and return (homeserver, response); exits on failure with nothing saved."""
+    homeserver = homeserver or discover_homeserver(user_id.split(":", 1)[1])
     say(f"Homeserver: {homeserver}")
     try:
         flows = request("GET", f"{homeserver}/_matrix/client/v3/login").get("flows", [])
@@ -204,12 +180,57 @@ def step_login(stored, change=False):
         sys.exit(f"Login failed: {exc}")
     except OSError as exc:
         sys.exit(f"Can't reach {homeserver}: {exc}")
+    return homeserver, resp
+
+
+def save_login(stored, homeserver, resp):
     DATA.mkdir(parents=True, exist_ok=True)
     DEVICE_ID_FILE.write_text(resp["device_id"])
     stored.update({"homeserver": homeserver, "user_id": resp["user_id"], "access_token": resp["access_token"]})
     bot_config.save_credentials(stored)
     done(f"Device {resp['device_id']}, saved in data/credentials.json")
     return resp["access_token"]
+
+
+def switch_account(stored, token):
+    """Change mode: another account for the bot. Logs in first, so a failed login
+    changes nothing."""
+    new_id = input(INDENT + "Enter to keep, or another account's user ID: ").strip()
+    if not new_id or new_id == stored["user_id"]:
+        return token
+    check_user_id(new_id)
+    say("The bot's keys and device belong to its account: the old ones are moved aside and logged")
+    say("out, and the next steps set up the new account. Linked Last.fm accounts stay.")
+    if not yes(f"Switch the bot to {new_id}?"):
+        return token
+    homeserver, resp = password_login(new_id)
+    try:
+        request("POST", f"{stored['homeserver']}/_matrix/client/v3/logout", {}, token=token)
+        say("Old device logged out")
+    except (MatrixError, OSError) as exc:
+        say(f"Couldn't log the old device out ({exc}); sign it out in Element")
+    move_account_files()
+    return save_login(stored, homeserver, resp)
+
+
+def step_login(stored, change=False):
+    print("1. Login")
+    token = stored.get("access_token")
+    if stored.get("homeserver") and stored.get("user_id") and token:
+        try:
+            request("GET", f"{stored['homeserver']}/_matrix/client/v3/account/whoami", token=token)
+        except MatrixError as exc:
+            if exc.status != 401:
+                sys.exit(f"Checking the saved login failed: {exc}")
+            say("The saved token no longer works (device logged out?), logging in again.")
+        except OSError as exc:
+            sys.exit(f"Can't reach {stored['homeserver']}: {exc}")
+        else:
+            already(f"{'Now' if change else 'Already done'}: {stored['user_id']}")
+            return switch_account(stored, token) if change else token
+    user_id = stored.get("user_id") or check_user_id(ask("Scrobbler bot's Matrix user ID (e.g. @scrobbler:matrix.org): "))
+    homeserver, resp = password_login(user_id, stored.get("homeserver"))
+    return save_login(stored, homeserver, resp)
 
 
 def step_owner(stored, change=False):
@@ -282,7 +303,9 @@ def step_storage_key(stored, change=False):
 
 def step_cross_signing(stored, token, change=False):
     print("6. Cross-signing keys")
-    if (DATA / "cross_signing_keys.json").exists():
+    global KEYS_SKIPPED
+    had_keys = (DATA / "cross_signing_keys.json").exists()
+    if had_keys:
         already("Already there")
         if not change or not yes("Restore them again with the recovery key (e.g. after a reset in Element)?"):
             return True
@@ -307,8 +330,11 @@ def step_cross_signing(stored, token, change=False):
         done("The account has no keys yet: the bot creates them on first start")
     elif result == "no_secret_storage":
         already("The account has keys but no recovery set up, so they can't be restored. The bot runs "
-             "with an unsigned device until you replace them (README, Device Verification)")
+                "with an unsigned device until you replace them (README, Device Verification)")
+    elif had_keys:
+        already("Skipped: the keys stay as they were")
     else:
+        KEYS_SKIPPED = True
         already("Skipped: the bot can't sign its device without the keys; restore or replace them later "
              "(README, Device Verification)")
     return True
@@ -328,7 +354,8 @@ def main():
             sys.exit("\nSetup isn't complete: fix the problem above and run scripts/setup.py again.")
         if WORKED or change:
             break
-        print("\nEverything is set up.")
+        print("\nSet up, except the cross-signing keys (skipped)." if KEYS_SKIPPED
+              else "\nEverything is set up.")
         if not yes("Change something?"):
             return
         print()

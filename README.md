@@ -57,14 +57,14 @@ docker compose run --rm scrobbler python3 scripts/setup.py
 docker compose up -d
 ```
 
-- **Back up the `scrobbler_data` volume** (setup values, linked accounts, scrobble queue, E2EE and cross-signing keys): without it the bot logs in as a new device and every user has to link Last.fm again.
+- **Back up the `scrobbler_data` volume** (setup values, linked accounts, scrobble queue, E2EE and cross-signing keys): without it the bot logs in as a new device and every user has to link Last.fm again. After switching the bot to another account, `data/previous-account-<date>/` holds the old account's keys; delete it once the new account works.
 - Windows: not tested. Docker Desktop runs the same Linux image, so the same commands should work in PowerShell.
 - Build it yourself: uncomment `build: .` in `docker-compose.yml` and run `docker compose up -d --build`.
 - Without Docker: [docs/install-raw.md](docs/install-raw.md), including a systemd unit.
 
 ### Optional settings
 
-Filters and timings live in `config/config.toml` (copied from `config/config.example.toml`); restart the bot after a change. A value set there overrides the one from `setup.py`.
+Filters and timings live in `config/config.toml` (copied from `config/config.example.toml`); restart the bot after a change. The room-invite and music-bot lists set there replace the ones from `setup.py`; the login and keys can only be changed by running `setup.py` again.
 
 ## User Commands
 
