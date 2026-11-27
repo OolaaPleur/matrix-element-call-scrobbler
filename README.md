@@ -2,6 +2,9 @@
 
 A Matrix bot that scrobbles what [matrix-element-call-musicbot](https://github.com/OolaaPleur/matrix-element-call-musicbot) plays to Last.fm, for everyone in the Element Call: each linked user gets the scrobbles on their own Last.fm account.
 
+> [!TIP]
+> Issues and pull requests are welcome: bug reports, ideas, fixes. [Open an issue](https://github.com/OolaaPleur/matrix-element-call-scrobbler/issues) · [pull requests](https://github.com/OolaaPleur/matrix-element-call-scrobbler/pulls)
+
 ## Contents
 
 - [How It Works](#how-it-works)
