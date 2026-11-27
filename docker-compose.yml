@@ -12,6 +12,10 @@ services:
       - scrobbler_logs:/app/logs
       - scrobbler_data:/app/data
 
+# Fixed names: the same whatever the clone's folder is called (compose would
+# otherwise prefix them with it), and what the README calls them.
 volumes:
   scrobbler_logs:
+    name: scrobbler_logs
   scrobbler_data:
+    name: scrobbler_data

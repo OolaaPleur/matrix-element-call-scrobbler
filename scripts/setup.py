@@ -27,6 +27,7 @@ Stop the bot first.
 import datetime
 import getpass
 import json
+import os
 import sys
 import tomllib
 import urllib.error
@@ -360,8 +361,11 @@ def main():
             return
         print()
         change = True
-    print("\nSetup done. Start the bot: docker compose up -d (or python3 main.py)"
-          if not change else "\nDone. Start the bot again: docker compose up -d (or python3 main.py)")
+    if os.environ.get("BOT_IN_DOCKER"):
+        start = "docker compose up -d"
+    else:  # raw install, see docs/install-raw.md
+        start = f"python3 main.py, or with the systemd unit: systemctl --user {'restart' if change else 'enable --now'} matrix-scrobbler"
+    print(f"\nSetup done. Start the bot: {start}" if not change else f"\nDone. Start the bot again: {start}")
 
 
 if __name__ == "__main__":

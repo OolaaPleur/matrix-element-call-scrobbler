@@ -19,13 +19,15 @@ The music bot sends a room event when a track starts and ends, with the track an
 
 You need:
 
-- a Matrix account for the bot and Docker;
+- a Matrix account for the bot, Git and Docker with Compose v2 (`docker compose version` must work);
 - a [Last.fm API account](https://www.last.fm/api/account/create) (free): its API key and shared secret;
 - the music bot in the same room(s), with `scrobbler_events = true` in the `[bot]` section of its `config.toml` (off by default).
 
 `scripts/setup.py` asks once for everything: the bot's user ID and password (the password is not stored), your user ID (the bot joins rooms you invite it to; Enter to skip), the music bot's user ID, the Last.fm key and secret, the key that encrypts the linked Last.fm accounts (Enter for a new one) and the account's recovery key ([Device Verification](#device-verification)). It keeps them in `data/credentials.json` (mode 600), so there is no config to fill in. Run it again if a step failed: done steps are skipped.
 
 The bot runs from the prebuilt image `ghcr.io/oolaapleur/matrix-element-call-scrobbler` (amd64 and arm64); the clone only provides `docker-compose.yml` and the example config.
+
+### Linux
 
 ```bash
 git clone https://github.com/OolaaPleur/matrix-element-call-scrobbler
@@ -57,8 +59,29 @@ docker compose run --rm scrobbler python3 scripts/setup.py
 docker compose up -d
 ```
 
+### Windows (PowerShell)
+
+Linux is the recommended host for the bot (a server, VPS or home machine that runs 24/7); use Windows only if you have no Linux machine. Tested on Windows 11 Home with Docker Desktop (WSL 2) and Windows PowerShell 5.1.
+
+Git, WSL 2 and Docker Desktop are set up as in the music bot's [Prerequisites on Windows](https://github.com/OolaaPleur/matrix-element-call-musicbot#prerequisites-on-windows) (three `winget`/`wsl` commands and a reboot). Docker Desktop must be running (*Engine running*) whenever you use `docker` or the bot runs; otherwise docker fails with `failed to connect to the docker API at npipe:////./pipe/docker_engine`.
+
+```powershell
+git clone https://github.com/OolaaPleur/matrix-element-call-scrobbler
+Set-Location .\matrix-element-call-scrobbler
+
+Copy-Item .\config\config.example.toml .\config\config.toml
+notepad .\config\config.toml     # settings (optional, the defaults work)
+
+docker compose run --rm scrobbler python3 scripts/setup.py
+docker compose up -d
+docker compose logs -f
+```
+
+Updating and changing setup's answers work with the same commands as on Linux.
+
+### Good to know
+
 - **Back up the `scrobbler_data` volume** (setup values, linked accounts, scrobble queue, E2EE and cross-signing keys): without it the bot logs in as a new device and every user has to link Last.fm again. After switching the bot to another account, `data/previous-account-<date>/` holds the old account's keys; delete it once the new account works.
-- Windows: not tested. Docker Desktop runs the same Linux image, so the same commands should work in PowerShell.
 - Build it yourself: uncomment `build: .` in `docker-compose.yml` and run `docker compose up -d --build`.
 - Without Docker: [docs/install-raw.md](docs/install-raw.md), including a systemd unit.
 
