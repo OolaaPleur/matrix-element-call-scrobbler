@@ -174,7 +174,7 @@ def step_login(stored, change=False):
             if not change:
                 return token
             if config_overrides("matrix", ["homeserver", "user_id"]):
-                say("[matrix] in the config overrides this; change it there.")
+                say("[matrix] homeserver/user_id in the config (legacy) override this; remove them there.")
                 return token
             new_id = input(INDENT + "Enter to keep, or another account's user ID: ").strip()
             if not new_id or new_id == stored["user_id"]:

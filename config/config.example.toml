@@ -1,14 +1,10 @@
-# Optional: scripts/setup.py asks for everything the bot needs and keeps it in
-# data/credentials.json. Copy this file to config/config.toml to change the
-# settings below; a value set here overrides the one from setup.
+# Every setting here is optional; the defaults work. A value set here overrides
+# the one from setup.
+# The bot's login, the Last.fm API key and the storage key come from
+# scripts/setup.py (data/credentials.json); run it again to change them.
 
 [matrix]
-# Set by setup.py; override only if needed:
-# homeserver  = "https://matrix.org"
-# user_id     = "@scrobbler-bot:matrix.org"
 device_name = "scrobbler"
-
-# [lastfm] api_key / shared_secret and [storage] encryption_key are set by setup.py.
 
 [storage]
 db_path        = "data/scrobbler.db"
