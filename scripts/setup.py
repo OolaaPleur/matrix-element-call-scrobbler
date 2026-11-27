@@ -5,7 +5,7 @@ Asks for everything the bot needs and keeps it in data/credentials.json
 (mode 600), so the config is optional and holds no secrets:
 
 1. the bot's Matrix login: logs in once with the password (the password is
-   not stored; the token goes to data/access_token);
+   not stored);
 2. your Matrix user ID (the bot joins rooms you invite it to; Enter to skip,
    more users in the config) and the music bot's user ID (whose track events are scrobbled);
 3. the Last.fm API key and shared secret;
@@ -29,7 +29,7 @@ from pathlib import Path
 
 ROOT = Path(__file__).resolve().parent.parent
 DATA = ROOT / "data"
-TOKEN_FILE = DATA / "access_token"
+LEGACY_TOKEN_FILE = DATA / "access_token"  # where older installs kept the token
 DEVICE_ID_FILE = DATA / "device_id"
 sys.path.insert(0, str(ROOT))
 import config as bot_config  # noqa: E402
@@ -89,7 +89,8 @@ def ask_user_id(prompt):
 
 
 def step_login(stored):
-    token = TOKEN_FILE.read_text().strip() if TOKEN_FILE.is_file() else ""
+    token = stored.get("access_token") or (
+        LEGACY_TOKEN_FILE.read_text().strip() if LEGACY_TOKEN_FILE.is_file() else "")
     if stored.get("homeserver") and stored.get("user_id") and token:
         try:
             request("GET", f"{stored['homeserver']}/_matrix/client/v3/account/whoami", token=token)
@@ -116,10 +117,9 @@ def step_login(stored):
     except OSError as exc:
         sys.exit(f"Can't reach {homeserver}: {exc}")
     DATA.mkdir(parents=True, exist_ok=True)
-    for path, value in ((TOKEN_FILE, resp["access_token"]), (DEVICE_ID_FILE, resp["device_id"])):
-        path.write_text(value)
-        path.chmod(0o600)
-    stored.update({"homeserver": homeserver, "user_id": resp["user_id"]})
+    DEVICE_ID_FILE.write_text(resp["device_id"])
+    LEGACY_TOKEN_FILE.unlink(missing_ok=True)
+    stored.update({"homeserver": homeserver, "user_id": resp["user_id"], "access_token": resp["access_token"]})
     bot_config.save_credentials(stored)
     print(f"1. Login: done, device {resp['device_id']}.")
     return resp["access_token"]

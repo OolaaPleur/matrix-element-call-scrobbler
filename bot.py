@@ -27,7 +27,7 @@ from nio.crypto import Sas
 
 from auto_accept import AutoAccept
 from commands import CommandRouter
-from config import Config
+from config import Config, load_credentials, save_credentials
 from event_handler import EVT_TRACK_FINISHED, EVT_TRACK_STARTED, EventHandler, event_type
 from linking import LinkingManager
 from play_tracker import PlayTracker
@@ -125,21 +125,25 @@ class ScrobblerBot:
 
     async def _login(self):
         c = self._config
-        # Attempt token-based restore first
+        # Restore the saved session: the token is kept in data/credentials.json
+        # (scripts/setup.py); data/access_token is where older installs kept it.
+        token = load_credentials().get("access_token") or ""
         token_file = Path("data/access_token")
-        if token_file.exists():
+        if not token and token_file.exists():
             token = token_file.read_text().strip()
-            if token:
-                self._client.access_token = token
-                self._client.user_id = c.user_id
-                logger.info("Restored session from token file")
-                return
+        if token:
+            self._client.access_token = token
+            self._client.user_id = c.user_id
+            logger.info("Restored the saved session")
+            return
 
         if not c.password:
-            raise RuntimeError("No saved login (data/access_token): run scripts/setup.py first")
+            raise RuntimeError("No saved login (data/credentials.json): run scripts/setup.py first")
         resp = await self._client.login(c.password, device_name=c.device_name)
         if hasattr(resp, "access_token"):
-            token_file.write_text(resp.access_token)
+            stored = load_credentials()
+            stored.update({"homeserver": c.homeserver, "user_id": c.user_id, "access_token": resp.access_token})
+            save_credentials(stored)
             logger.info("Logged in, token saved")
         else:
             raise RuntimeError(f"Login failed: {resp}")
