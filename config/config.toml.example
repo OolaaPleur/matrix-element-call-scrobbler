@@ -8,10 +8,6 @@
 # user_id     = "@scrobbler-bot:matrix.org"
 device_name = "scrobbler"
 
-[matrix.verification]
-# Users whose verification requests the bot accepts (setup.py: your user ID).
-# auto_accept_users = ["@yourusername:matrix.org"]
-
 # [lastfm] api_key / shared_secret and [storage] encryption_key are set by setup.py.
 
 [storage]

@@ -6,8 +6,8 @@ Asks for everything the bot needs and keeps it in data/credentials.json
 
 1. the bot's Matrix login: logs in once with the password (the password is
    not stored; the token goes to data/access_token);
-2. your Matrix user ID (may invite the bot into rooms and verify it; Enter to
-   skip, more users in the config) and the music bot's user ID (whose track events are scrobbled);
+2. your Matrix user ID (the bot joins rooms you invite it to; Enter to skip,
+   more users in the config) and the music bot's user ID (whose track events are scrobbled);
 3. the Last.fm API key and shared secret;
 4. the key that encrypts the Last.fm sessions in the database (new, or the
    one of an earlier install whose scrobbler.db you keep);
@@ -128,7 +128,7 @@ def step_login(stored):
 def step_settings(stored):
     changed = False
     if "owners" not in stored:
-        owner = input("Your Matrix user ID; the bot accepts your room invites and verification requests "
+        owner = input("Your Matrix user ID; the bot joins rooms you invite it to "
                       "(Enter to skip; more users go into the config): ").strip()
         if owner and (not owner.startswith("@") or ":" not in owner):
             sys.exit(f"A full user ID is needed: @name:server (got {owner!r})")
