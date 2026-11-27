@@ -143,6 +143,8 @@ python -m matrix_bot_common.restore_keys        # without Docker, in the bot's d
 
 **No recovery key?** The bot can replace the account's keys, but only when asked to: start it once with `CROSS_SIGNING_ALLOW_RESET=1` (Docker: add `environment: [CROSS_SIGNING_ALLOW_RESET=1]` to the service, remove it afterwards). On homeservers with OAuth login (matrix.org) the log then shows a link: open it, log in as the bot, approve the reset, and restart the bot. Everyone who verified the bot has to verify it again.
 
+**After a reinstall** (or a lost `data/`), log the bot's old sessions out: in Element logged in as the bot, Settings → Sessions, sign out every session but the current ones. They no longer work, but everyone's clients keep sending them room keys, and unsigned ones can show as unverified sessions of the bot.
+
 **Verifying the bot (recommended)** adds the green shield in Element. Log in to Element as the bot in a separate browser or private window (skip this if it is still logged in from when you created the account; if Element asks to verify that session, use the recovery key, **never "Reset"**). Then in your own Element open the bot's profile → **Verify**, accept in the bot's session and compare the emoji. You can log that session out afterwards.
 
 ## Filtering Playback Events
