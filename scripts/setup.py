@@ -16,14 +16,19 @@ Asks for everything the bot needs and keeps it in data/credentials.json
    in Element), asks for the recovery key and restores them, so the bot signs
    its device on first start.
 
-Safe to run again: done steps are skipped.
+Safe to run again: done steps are skipped. When everything is done, it
+offers to change the answers (another bot account, other users, another
+music bot, other Last.fm API keys, the cross-signing keys restored again).
+Stop the bot first.
 
     docker compose run --rm scrobbler python3 scripts/setup.py
     python3 scripts/setup.py            # without Docker, in the bot's venv
 """
+import datetime
 import getpass
 import json
 import sys
+import tomllib
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -80,8 +85,66 @@ def say(text):
     print(INDENT + text)
 
 
+WORKED = False  # set when a step did something on this run
+
+
 def done(text):
+    global WORKED
+    WORKED = True
     print(INDENT + "✓ " + text)
+
+
+def already(text):
+    print(INDENT + "✓ " + text)
+
+
+def yes(prompt):
+    return input(INDENT + prompt + " [y/N]: ").strip().lower() in ("y", "yes")
+
+
+def user_ids(text):
+    return [check_user_id(part) for part in text.replace(",", " ").split() if part]
+
+
+def config_overrides(section, keys):
+    """Keys of config/config.toml's [section] that override what setup stores."""
+    path = ROOT / "config" / "config.toml"
+    if not path.is_file():
+        return []
+    table = tomllib.loads(path.read_text(encoding="utf-8")).get(section, {})
+    return [key for key in keys if key in table and (table[key] or isinstance(table[key], list))]
+
+
+def ask_ids(stored, key, section, config_key, empty):
+    """Change mode: new user IDs for stored[key], unless the config overrides them."""
+    if config_overrides(section, [config_key]):
+        say(f"{config_key} in [{section}] of the config overrides this; change it there.")
+        return
+    answer = input(INDENT + f"Enter to keep, {'- for nobody, ' if empty else ''}"
+                            "or user IDs (space-separated): ").strip()
+    if not answer:
+        return
+    stored[key] = [] if answer == "-" and empty else user_ids(answer)
+    if not stored[key] and not empty:
+        sys.exit("At least one user ID is needed")
+    bot_config.save_credentials(stored)
+    done(", ".join(stored[key]) or "nobody")
+
+
+# What belongs to the bot's account, moved aside when it changes. The database
+# (linked Last.fm accounts, scrobble queue) stays.
+ACCOUNT_FILES = ["crypto_store", "device_id", "access_token", "cross_signing_keys.json",
+                 "cross_signing_keys.json.stale-*"]
+
+
+def move_account_files():
+    target = DATA / f"previous-account-{datetime.datetime.now():%Y%m%d-%H%M%S}"
+    moved = [path for pattern in ACCOUNT_FILES for path in DATA.glob(pattern)]
+    if moved:
+        target.mkdir()
+        for path in moved:
+            path.rename(target / path.name)
+        say(f"The old account's keys and device are in data/{target.name}/")
 
 
 def ask(prompt, secret=False, default=None):
@@ -95,20 +158,37 @@ def ask(prompt, secret=False, default=None):
 
 
 def check_user_id(value):
-    if not value.startswith("@") or ":" not in value:
+    if not value.startswith("@") or ":" not in value or any(c in value for c in " ,"):
         sys.exit(f"A full user ID is needed: @name:server (got {value!r})")
     return value
 
 
-def step_login(stored):
+def step_login(stored, change=False):
     print("1. Login")
     token = stored.get("access_token") or (
         LEGACY_TOKEN_FILE.read_text().strip() if LEGACY_TOKEN_FILE.is_file() else "")
     if stored.get("homeserver") and stored.get("user_id") and token:
         try:
             request("GET", f"{stored['homeserver']}/_matrix/client/v3/account/whoami", token=token)
-            done(f"Already done: {stored['user_id']}")
-            return token
+            already(f"{'Now' if change else 'Already done'}: {stored['user_id']}")
+            if not change:
+                return token
+            if config_overrides("matrix", ["homeserver", "user_id"]):
+                say("[matrix] in the config overrides this; change it there.")
+                return token
+            new_id = input(INDENT + "Enter to keep, or another account's user ID: ").strip()
+            if not new_id or new_id == stored["user_id"]:
+                return token
+            check_user_id(new_id)
+            say("The bot's keys and device belong to its account: they are moved aside, and the next")
+            say("steps set up the new account. Linked Last.fm accounts stay.")
+            if not yes(f"Switch the bot to {new_id}?"):
+                return token
+            move_account_files()
+            for key in ("homeserver", "user_id", "access_token"):
+                stored.pop(key, None)
+            stored["user_id"] = new_id
+            bot_config.save_credentials(stored)
         except MatrixError as exc:
             if exc.status != 401:
                 sys.exit(f"Checking the saved login failed: {exc}")
@@ -138,10 +218,13 @@ def step_login(stored):
     return resp["access_token"]
 
 
-def step_owner(stored):
+def step_owner(stored, change=False):
     print("2. Room invites")
     if "owners" in stored:
-        done(f"Already done: accepted from {', '.join(stored['owners']) or 'nobody (skipped)'}")
+        already(f"{'Now' if change else 'Already done'}: accepted from "
+                f"{', '.join(stored['owners']) or 'nobody (skipped)'}")
+        if change:
+            ask_ids(stored, "owners", "behavior", "auto_accept_room_invites_from", empty=True)
         return
     owner = input(INDENT + "Your Matrix user ID; the bot joins rooms you invite it to "
                   "(Enter to skip; more users: auto_accept_room_invites_from in the config): ").strip()
@@ -155,19 +238,31 @@ def step_owner(stored):
         done("Skipped: the bot joins no room by itself; set auto_accept_room_invites_from in the config")
 
 
-def step_music_bot(stored):
+def step_music_bot(stored, change=False):
     print("3. Music bot")
-    if not stored.get("music_bots"):
-        stored["music_bots"] = [check_user_id(ask("The music bot's Matrix user ID: "))]
-        bot_config.save_credentials(stored)
+    if stored.get("music_bots"):
+        already(f"{'Now' if change else 'Already done'}: scrobbling track events from "
+                f"{', '.join(stored['music_bots'])}")
+        if change:
+            ask_ids(stored, "music_bots", "emitters", "allowed_user_ids", empty=False)
+        return
+    stored["music_bots"] = [check_user_id(ask("The music bot's Matrix user ID: "))]
+    bot_config.save_credentials(stored)
     done(f"Scrobbling track events from {', '.join(stored['music_bots'])}")
 
 
-def step_lastfm(stored):
+def step_lastfm(stored, change=False):
     print("4. Last.fm")
     if stored.get("lastfm_api_key") and stored.get("lastfm_shared_secret"):
-        done("Already done")
-        return
+        already(f"{'Now' if change else 'Already done'}: API key {stored['lastfm_api_key'][:4]}…")
+        if not change:
+            return
+        if config_overrides("lastfm", ["api_key", "shared_secret"]):
+            say("[lastfm] in the config overrides this; change it there.")
+            return
+        say("Linked accounts belong to the API key: with another one, everyone links Last.fm again.")
+        if not yes("Use another API key?"):
+            return
     say("From your API account: https://www.last.fm/api/account/create")
     stored["lastfm_api_key"] = ask("API key: ")
     stored["lastfm_shared_secret"] = ask("Shared secret (not shown): ", secret=True)
@@ -175,10 +270,11 @@ def step_lastfm(stored):
     done("Saved")
 
 
-def step_storage_key(stored):
+def step_storage_key(stored, change=False):
     print("5. Storage encryption key")
     if stored.get("encryption_key"):
-        done("Already done")
+        already("Already done" + (" (can't be changed: the linked accounts in scrobbler.db are "
+                                  "encrypted with it)" if change else ""))
         return
     from cryptography.fernet import Fernet
     key = ask("Enter for a new key, or paste the old one to keep an earlier scrobbler.db (not shown): ",
@@ -193,11 +289,12 @@ def step_storage_key(stored):
     done("Old key kept" if key else "New key generated")
 
 
-def step_cross_signing(stored, token):
+def step_cross_signing(stored, token, change=False):
     print("6. Cross-signing keys")
     if (DATA / "cross_signing_keys.json").exists():
-        done("Already there")
-        return True
+        already("Already there")
+        if not change or not yes("Restore them again with the recovery key (e.g. after a reset in Element)?"):
+            return True
     try:
         from matrix_bot_common import restore_keys
     except ImportError as exc:
@@ -218,25 +315,35 @@ def step_cross_signing(stored, token):
     elif result == "fresh":
         done("The account has no keys yet: the bot creates them on first start")
     elif result == "no_secret_storage":
-        done("The account has keys but no recovery set up, so they can't be restored. The bot runs "
+        already("The account has keys but no recovery set up, so they can't be restored. The bot runs "
              "with an unsigned device until you replace them (README, Device Verification)")
     else:
-        done("Skipped: the bot can't sign its device without the keys; restore or replace them later "
+        already("Skipped: the bot can't sign its device without the keys; restore or replace them later "
              "(README, Device Verification)")
     return True
 
 
 def main():
     stored = bot_config.load_credentials()
-    token = step_login(stored)
-    step_owner(stored)
-    step_music_bot(stored)
-    step_lastfm(stored)
-    step_storage_key(stored)
-    keys_ok = step_cross_signing(stored, token)
-    if not keys_ok:
-        sys.exit("\nSetup isn't complete: fix the problem above and run scripts/setup.py again.")
-    print("\nSetup done. Start the bot: docker compose up -d (or python3 main.py)")
+    change = False
+    while True:
+        token = step_login(stored, change)
+        step_owner(stored, change)
+        step_music_bot(stored, change)
+        step_lastfm(stored, change)
+        step_storage_key(stored, change)
+        keys_ok = step_cross_signing(stored, token, change)
+        if not keys_ok:
+            sys.exit("\nSetup isn't complete: fix the problem above and run scripts/setup.py again.")
+        if WORKED or change:
+            break
+        print("\nEverything is set up.")
+        if not yes("Change something?"):
+            return
+        print()
+        change = True
+    print("\nSetup done. Start the bot: docker compose up -d (or python3 main.py)"
+          if not change else "\nDone. Start the bot again: docker compose up -d (or python3 main.py)")
 
 
 if __name__ == "__main__":

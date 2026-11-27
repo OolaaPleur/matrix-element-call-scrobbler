@@ -25,7 +25,7 @@ python main.py
 
 Logs go to `logs/scrobbler.log` (INFO and up, rotating, 10 MB × 5 files). SIGTERM/Ctrl+C stop the bot cleanly.
 
-To restore the cross-signing keys later: `python -m matrix_bot_common.restore_keys` in the bot's directory, then restart the bot.
+To change setup's answers later, stop the bot and run `python scripts/setup.py` again. To restore the cross-signing keys only: `python -m matrix_bot_common.restore_keys`, then restart the bot.
 
 Windows: not tested. The bot is plain Python, so the same steps should work in PowerShell (`.venv\Scripts\Activate.ps1` instead of `source .venv/bin/activate`); reports welcome.
 

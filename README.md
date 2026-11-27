@@ -49,6 +49,14 @@ docker compose pull
 docker compose up -d
 ```
 
+To change setup's answers later (another bot account, who may invite it, the music bot, the Last.fm API key, the cross-signing keys), stop the bot and run setup again: when everything is set up, it asks what to change.
+
+```bash
+docker compose stop
+docker compose run --rm scrobbler python3 scripts/setup.py
+docker compose up -d
+```
+
 - **Back up the `scrobbler_data` volume** (setup values, linked accounts, scrobble queue, E2EE and cross-signing keys): without it the bot logs in as a new device and every user has to link Last.fm again.
 - Windows: not tested. Docker Desktop runs the same Linux image, so the same commands should work in PowerShell.
 - Build it yourself: uncomment `build: .` in `docker-compose.yml` and run `docker compose up -d --build`.
